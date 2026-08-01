@@ -1,0 +1,19 @@
+# Native launch splash — this is what the OS shows the instant the app icon is tapped,
+# before the Flutter engine has even started (no Dart code runs during this). It must stay
+# a static background + centered image; the animated globe/plane/ship/truck/particles live
+# entirely in lib/screens/auth/splash_screen.dart, which takes over the instant Flutter's
+# first frame is drawn — same navy background and same logo, so the handoff is invisible.
+flutter_native_splash:
+  color: "#0A1A33"
+  image: assets/images/app_logo_adaptive_fg.png
+
+  # Android 12+ uses the platform SplashScreen API instead of a drawable — same navy
+  # background, same pre-padded logo (already scaled to the safe zone so nothing is
+  # cropped/zoomed by the OS's icon animation).
+  android_12:
+    color: "#0A1A33"
+    image: assets/images/app_logo_adaptive_fg.png
+
+  android: true
+  ios: true
+  fullscreen: true

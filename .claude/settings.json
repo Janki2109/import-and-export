@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill //F //PID 7268)",
+      "Bash(python3 -c ' *)",
+      "Bash(xxd -s 24 -l 2 assets/images/app_logo.png)",
+      "Bash(pip3 --version)",
+      "Bash(/c/Python314/python.exe -c ' *)"
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+.env
+storage/
+secrets/
+*.exe
+*.log

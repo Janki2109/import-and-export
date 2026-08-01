@@ -1,0 +1,1022 @@
+openapi: 3.0.3
+info:
+  title: One Bharat Export-Import API
+  description: >
+    REST API for the One Bharat Export-Import platform — importer/exporter/logistics
+    trade workflow with escrow payments, shipment tracking, RFQ/quotation, chat,
+    trade document generation, and platform revenue features.
+    Real-time chat additionally uses a WebSocket endpoint (GET /api/v1/ws/chat?token=...)
+    not representable as a standard HTTP operation below.
+  version: "1.0.0"
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Orders
+  - name: KYC
+  - name: Shipments
+  - name: Notifications
+  - name: RFQ
+  - name: Quotations
+  - name: Wallet
+  - name: Documents
+  - name: Search
+  - name: Calculators
+  - name: Uploads
+  - name: Disputes
+  - name: Fleet
+  - name: Products
+  - name: Membership
+  - name: Advertisements
+  - name: Audit Logs
+  - name: Chat
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new importer/exporter/logistics user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, full_name, email, phone, password]
+              properties:
+                role: { type: string, enum: [importer, exporter, logistics] }
+                full_name: { type: string }
+                company_name: { type: string, nullable: true }
+                email: { type: string, format: email }
+                phone: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '201': { description: Registered successfully }
+        '400': { description: Validation error or email already registered }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive an access + refresh token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { description: "user, access_token, refresh_token" }
+        '401': { description: Invalid credentials }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a valid refresh token for a new access+refresh pair (rotates the old one out)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties: { refresh_token: { type: string } }
+      responses:
+        '200': { description: New access_token + refresh_token }
+        '401': { description: Invalid or expired refresh token }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke a refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties: { refresh_token: { type: string } }
+      responses:
+        '200': { description: Logged out }
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List my orders (importer sees theirs, exporter sees theirs)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: List of orders }
+    post:
+      tags: [Orders]
+      summary: Create an order (importer only) — creates escrow row + Razorpay order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [exporter_id, product_name, quantity, unit, unit_price]
+              properties:
+                exporter_id: { type: string }
+                product_name: { type: string }
+                hsn_code: { type: string, nullable: true }
+                quantity: { type: number }
+                unit: { type: string }
+                unit_price: { type: number }
+                delivery_address: { type: string, nullable: true }
+                notes: { type: string, nullable: true }
+      responses:
+        '201': { description: "order, razorpay_order_id, amount" }
+
+  /orders/verify-payment:
+    post:
+      tags: [Orders]
+      summary: Verify Razorpay checkout signature and move escrow to held (importer only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature]
+              properties:
+                order_id: { type: string }
+                razorpay_order_id: { type: string }
+                razorpay_payment_id: { type: string }
+                razorpay_signature: { type: string }
+      responses:
+        '200': { description: Payment held in escrow }
+
+  /orders/confirm-delivery:
+    post:
+      tags: [Orders]
+      summary: Importer confirms delivery — releases escrow payout to exporter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, exporter_fund_account_id]
+              properties:
+                order_id: { type: string }
+                exporter_fund_account_id: { type: string }
+      responses:
+        '200': { description: Delivery confirmed, payment released }
+
+  /kyc/submit:
+    post:
+      tags: [KYC]
+      summary: Submit/update KYC details and document URLs (already uploaded via /uploads/presign)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pan_number: { type: string, nullable: true }
+                gst_number: { type: string, nullable: true }
+                iec_code: { type: string, nullable: true }
+                business_license: { type: string, nullable: true }
+                pan_doc_url: { type: string, nullable: true }
+                gst_doc_url: { type: string, nullable: true }
+                iec_doc_url: { type: string, nullable: true }
+                address_doc_url: { type: string, nullable: true }
+      responses:
+        '200': { description: KYC submitted, pending review }
+
+  /kyc/me:
+    get:
+      tags: [KYC]
+      summary: Get my own KYC status
+      responses:
+        '200': { description: KYC details or pending status }
+
+  /kyc/pending:
+    get:
+      tags: [KYC]
+      summary: List KYC submissions pending review (admin only)
+      responses:
+        '200': { description: List of pending KYC records }
+
+  /kyc/approve:
+    post:
+      tags: [KYC]
+      summary: Approve a user's KYC (admin only) — also registers a Razorpay Route contact for exporter/logistics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties: { user_id: { type: string } }
+      responses:
+        '200': { description: KYC approved }
+
+  /kyc/reject:
+    post:
+      tags: [KYC]
+      summary: Reject a user's KYC with a reason (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, reason]
+              properties:
+                user_id: { type: string }
+                reason: { type: string }
+      responses:
+        '200': { description: KYC rejected }
+
+  /shipments/assign:
+    post:
+      tags: [Shipments]
+      summary: Exporter assigns a logistics partner to an order's shipment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, logistics_id, tracking_number, carrier_name]
+              properties:
+                order_id: { type: string }
+                logistics_id: { type: string }
+                tracking_number: { type: string }
+                carrier_name: { type: string }
+      responses:
+        '200': { description: Logistics assigned, order marked shipped }
+
+  /shipments/update-status:
+    post:
+      tags: [Shipments]
+      summary: Logistics partner updates shipment status (picked_up/in_transit/delivered/exception)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment_id, status]
+              properties:
+                shipment_id: { type: string }
+                status: { type: string }
+                location: { type: string }
+                remarks: { type: string }
+      responses:
+        '200': { description: Status updated }
+
+  /shipments/upload-pod:
+    post:
+      tags: [Shipments]
+      summary: Logistics partner uploads proof of delivery (photo URL, already uploaded via /uploads/presign)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [shipment_id, file_url]
+              properties:
+                shipment_id: { type: string }
+                file_url: { type: string }
+                file_type: { type: string }
+                signature_url: { type: string, nullable: true }
+                remarks: { type: string, nullable: true }
+      responses:
+        '200': { description: POD uploaded }
+
+  /shipments/by-order/{order_id}:
+    get:
+      tags: [Shipments]
+      summary: Get the shipment for an order
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Shipment details }
+
+  /shipments/{shipment_id}/timeline:
+    get:
+      tags: [Shipments]
+      summary: Get the tracking event timeline for a shipment
+      parameters:
+        - name: shipment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: List of shipment events }
+
+  /shipments/mine:
+    get:
+      tags: [Shipments]
+      summary: List shipments assigned to me (logistics only)
+      responses:
+        '200': { description: List of shipments }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List my notifications
+      responses:
+        '200': { description: List of notifications }
+
+  /notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Marked read }
+
+  /notifications/register-device:
+    post:
+      tags: [Notifications]
+      summary: Register an FCM device token for push notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, platform]
+              properties:
+                token: { type: string }
+                platform: { type: string, enum: [android, ios] }
+      responses:
+        '200': { description: Device registered }
+
+  /rfqs:
+    post:
+      tags: [RFQ]
+      summary: Importer posts a Request For Quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_name, quantity, unit, destination_country]
+              properties:
+                product_name: { type: string }
+                hsn_code: { type: string, nullable: true }
+                quantity: { type: number }
+                unit: { type: string }
+                target_price: { type: number, nullable: true }
+                destination_country: { type: string }
+                description: { type: string, nullable: true }
+      responses:
+        '201': { description: RFQ created }
+    get:
+      tags: [RFQ]
+      summary: Browse open RFQs (exporter only)
+      responses:
+        '200': { description: List of open RFQs }
+
+  /rfqs/mine:
+    get:
+      tags: [RFQ]
+      summary: List my own RFQs (importer only)
+      responses:
+        '200': { description: List of RFQs }
+
+  /rfqs/{id}:
+    get:
+      tags: [RFQ]
+      summary: Get an RFQ by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: RFQ details }
+
+  /rfqs/{id}/quotations:
+    get:
+      tags: [RFQ]
+      summary: List quotations received for my RFQ (importer only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: List of quotations }
+
+  /quotations:
+    post:
+      tags: [Quotations]
+      summary: Exporter submits a quotation against an open RFQ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rfq_id, unit_price, quantity, validity_date]
+              properties:
+                rfq_id: { type: string }
+                unit_price: { type: number }
+                quantity: { type: number }
+                validity_date: { type: string, format: date }
+                terms: { type: string, nullable: true }
+      responses:
+        '201': { description: Quotation submitted }
+
+  /quotations/mine:
+    get:
+      tags: [Quotations]
+      summary: List my submitted quotations (exporter only)
+      responses:
+        '200': { description: List of quotations }
+
+  /quotations/{id}/accept:
+    post:
+      tags: [Quotations]
+      summary: Importer accepts a quotation — creates the order + escrow row
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_address: { type: string, nullable: true }
+                notes: { type: string, nullable: true }
+      responses:
+        '200': { description: Order created from quotation }
+
+  /wallet/me:
+    get:
+      tags: [Wallet]
+      summary: Get my wallet balance and recent ledger transactions
+      responses:
+        '200': { description: Wallet summary }
+
+  /documents/generate:
+    post:
+      tags: [Documents]
+      summary: Generate a trade document PDF (commercial invoice / packing list / certificate of origin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, type]
+              properties:
+                order_id: { type: string }
+                type: { type: string, enum: [commercial_invoice, packing_list, certificate_of_origin] }
+      responses:
+        '201': { description: Document generated }
+
+  /documents/by-order/{order_id}:
+    get:
+      tags: [Documents]
+      summary: List generated documents for an order
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: List of documents }
+
+  /search/hs-codes:
+    get:
+      tags: [Search]
+      summary: Search HS codes by code prefix or description keyword
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: List of matching HS codes }
+
+  /search/gst-rates:
+    get:
+      tags: [Search]
+      summary: List standard GST rate slabs
+      responses:
+        '200': { description: List of GST rate categories }
+
+  /search/countries:
+    get:
+      tags: [Search]
+      summary: Search countries by name or ISO code
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: List of matching countries }
+
+  /search/policies:
+    get:
+      tags: [Search]
+      summary: List import/export policy notes, filterable by country/HS chapter/type
+      parameters:
+        - name: country_id
+          in: query
+          schema: { type: string }
+        - name: hs_chapter
+          in: query
+          schema: { type: string }
+        - name: policy_type
+          in: query
+          schema: { type: string, enum: [import, export] }
+      responses:
+        '200': { description: List of policies }
+
+  /search/ai-product-search:
+    get:
+      tags: [Search]
+      summary: AI-assisted free-text product description -> matching HS codes (Groq-backed, grounded on hs_codes table)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Ranked HS code matches }
+
+  /calculators/duty:
+    get:
+      tags: [Calculators]
+      summary: Estimate Basic Customs Duty + Social Welfare Surcharge + IGST for an HS code
+      parameters:
+        - name: hs_code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: assessable_value
+          in: query
+          required: true
+          schema: { type: number }
+      responses:
+        '200': { description: Duty breakdown }
+
+  /calculators/freight:
+    get:
+      tags: [Calculators]
+      summary: Estimate freight cost by mode (air/sea/road), weight, and dimensions
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema: { type: string, enum: [air, sea, road] }
+        - name: weight_kg
+          in: query
+          required: true
+          schema: { type: number }
+        - name: length_cm
+          in: query
+          schema: { type: number }
+        - name: width_cm
+          in: query
+          schema: { type: number }
+        - name: height_cm
+          in: query
+          schema: { type: number }
+      responses:
+        '200': { description: Freight estimate }
+
+  /calculators/landed-cost:
+    post:
+      tags: [Calculators]
+      summary: Compute FOB -> CIF -> total landed cost including duty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hs_code, fob_value]
+              properties:
+                hs_code: { type: string }
+                fob_value: { type: number }
+                freight: { type: number }
+                insurance: { type: number }
+                other_charges: { type: number }
+      responses:
+        '200': { description: Landed cost breakdown }
+
+  /uploads/presign:
+    post:
+      tags: [Uploads]
+      summary: Get a short-lived presigned S3 PUT URL to upload a file directly from the client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, file_name, content_type]
+              properties:
+                category: { type: string, enum: [kyc, pod, chat] }
+                file_name: { type: string }
+                content_type: { type: string }
+      responses:
+        '200': { description: "upload_url, file_url, key" }
+
+  /disputes:
+    post:
+      tags: [Disputes]
+      summary: Raise a dispute on an order (importer or exporter) — freezes escrow for admin review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, reason]
+              properties:
+                order_id: { type: string }
+                reason: { type: string }
+      responses:
+        '201': { description: Dispute raised }
+
+  /disputes/mine:
+    get:
+      tags: [Disputes]
+      summary: List disputes I raised
+      responses:
+        '200': { description: List of disputes }
+
+  /disputes/pending:
+    get:
+      tags: [Disputes]
+      summary: List open disputes (admin review queue)
+      responses:
+        '200': { description: List of open disputes }
+
+  /disputes/{id}/resolve:
+    post:
+      tags: [Disputes]
+      summary: Resolve a dispute — refund the importer or release to the exporter (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution, notes]
+              properties:
+                resolution: { type: string, enum: [refund, release] }
+                notes: { type: string }
+      responses:
+        '200': { description: Dispute resolved }
+
+  /fleet:
+    post:
+      tags: [Fleet]
+      summary: Add a vehicle to my fleet (logistics only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vehicle_type, registration_number]
+              properties:
+                vehicle_type: { type: string }
+                registration_number: { type: string }
+                capacity_kg: { type: number, nullable: true }
+                capacity_cbm: { type: number, nullable: true }
+                service_route: { type: string, nullable: true }
+                status: { type: string, enum: [active, inactive, maintenance] }
+      responses:
+        '201': { description: Vehicle added }
+
+  /fleet/mine:
+    get:
+      tags: [Fleet]
+      summary: List my fleet vehicles (logistics only)
+      responses:
+        '200': { description: List of vehicles }
+
+  /fleet/{id}:
+    put:
+      tags: [Fleet]
+      summary: Update a fleet vehicle (logistics only, must own it)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vehicle_type: { type: string }
+                registration_number: { type: string }
+                capacity_kg: { type: number, nullable: true }
+                capacity_cbm: { type: number, nullable: true }
+                service_route: { type: string, nullable: true }
+                status: { type: string }
+      responses:
+        '200': { description: Vehicle updated }
+    delete:
+      tags: [Fleet]
+      summary: Remove a fleet vehicle (logistics only, must own it)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Vehicle removed }
+
+  /products:
+    get:
+      tags: [Products]
+      summary: Search the exporter product catalog (public browse for importers)
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: List of matching products }
+    post:
+      tags: [Products]
+      summary: Add a product to my catalog (exporter only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, unit, unit_price]
+              properties:
+                name: { type: string }
+                hsn_code: { type: string, nullable: true }
+                description: { type: string, nullable: true }
+                unit: { type: string }
+                unit_price: { type: number }
+                min_order_qty: { type: number }
+                image_url: { type: string, nullable: true }
+      responses:
+        '201': { description: Product added }
+
+  /products/mine:
+    get:
+      tags: [Products]
+      summary: List my own products (exporter only)
+      responses:
+        '200': { description: List of products }
+
+  /products/{id}:
+    put:
+      tags: [Products]
+      summary: Update a product (exporter only, must own it)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                hsn_code: { type: string, nullable: true }
+                description: { type: string, nullable: true }
+                unit: { type: string }
+                unit_price: { type: number }
+                min_order_qty: { type: number }
+                image_url: { type: string, nullable: true }
+                is_active: { type: boolean }
+      responses:
+        '200': { description: Product updated }
+    delete:
+      tags: [Products]
+      summary: Remove a product (exporter only, must own it)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Product removed }
+
+  /membership/me:
+    get:
+      tags: [Membership]
+      summary: Get my membership tier and featured status
+      responses:
+        '200': { description: Membership details }
+
+  /membership/premium/order:
+    post:
+      tags: [Membership]
+      summary: Create a Razorpay order to purchase 30 days of Premium Membership
+      responses:
+        '200': { description: "razorpay_order_id, amount" }
+
+  /membership/premium/verify:
+    post:
+      tags: [Membership]
+      summary: Verify payment and activate Premium Membership for 30 days
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+              properties:
+                razorpay_order_id: { type: string }
+                razorpay_payment_id: { type: string }
+                razorpay_signature: { type: string }
+      responses:
+        '200': { description: Premium activated }
+
+  /membership/featured/order:
+    post:
+      tags: [Membership]
+      summary: Create a Razorpay order to purchase 30 days of Featured placement
+      responses:
+        '200': { description: "razorpay_order_id, amount" }
+
+  /membership/featured/verify:
+    post:
+      tags: [Membership]
+      summary: Verify payment and activate Featured placement for 30 days
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [razorpay_order_id, razorpay_payment_id, razorpay_signature]
+              properties:
+                razorpay_order_id: { type: string }
+                razorpay_payment_id: { type: string }
+                razorpay_signature: { type: string }
+      responses:
+        '200': { description: Featured placement activated }
+
+  /membership/featured:
+    get:
+      tags: [Membership]
+      summary: List currently featured users by role (Featured Exporters / Featured Logistics)
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [exporter, logistics] }
+      responses:
+        '200': { description: List of featured users }
+
+  /ads:
+    post:
+      tags: [Advertisements]
+      summary: Create a self-serve advertisement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, image_url]
+              properties:
+                title: { type: string }
+                image_url: { type: string }
+                target_url: { type: string, nullable: true }
+                ends_at: { type: string, format: date, nullable: true }
+      responses:
+        '201': { description: Advertisement created }
+
+  /ads/active:
+    get:
+      tags: [Advertisements]
+      summary: List currently active advertisements (home feed)
+      responses:
+        '200': { description: List of active ads }
+
+  /ads/mine:
+    get:
+      tags: [Advertisements]
+      summary: List my own advertisements
+      responses:
+        '200': { description: List of ads }
+
+  /audit-logs:
+    get:
+      tags: [Audit Logs]
+      summary: List recent platform audit log entries (admin only)
+      responses:
+        '200': { description: List of audit log entries }
+
+  /chat/conversations:
+    post:
+      tags: [Chat]
+      summary: Start (or get existing) a conversation with another user — role pairing enforced (importer<->exporter, exporter<->logistics)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [other_user_id]
+              properties: { other_user_id: { type: string } }
+      responses:
+        '200': { description: Conversation created or fetched }
+    get:
+      tags: [Chat]
+      summary: List my conversations with last-message preview and unread count
+      responses:
+        '200': { description: List of conversations }
+
+  /chat/conversations/{id}/messages:
+    get:
+      tags: [Chat]
+      summary: Get message history for a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: List of messages }
+    post:
+      tags: [Chat]
+      summary: Send a message (REST fallback — real-time delivery is via the WebSocket endpoint)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [text, file, document, quotation] }
+                content: { type: string, nullable: true }
+                file_url: { type: string, nullable: true }
+                quotation_id: { type: string, nullable: true }
+      responses:
+        '201': { description: Message sent }
+
+  /chat/conversations/{id}/read:
+    post:
+      tags: [Chat]
+      summary: Mark all messages in a conversation as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Marked read }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

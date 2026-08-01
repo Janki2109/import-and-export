@@ -1,0 +1,103 @@
+name: onebharat_app
+description: One Bharat Export-Import — Importer, Exporter & Logistics platform
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  package_info_plus: ^8.0.0
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Routing
+  go_router: ^14.2.7
+
+  # Networking
+  dio: ^5.4.3
+  connectivity_plus: ^6.0.3
+
+  # Local storage (JWT token, role cache)
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.2.3
+
+  # UI
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.10+1
+  shimmer: ^3.0.0
+  fl_chart: ^0.68.0
+  cached_network_image: ^3.3.1
+
+  # Image picking (KYC docs, POD upload)
+  image_picker: ^1.1.2
+
+  # Opening generated trade document PDFs, launching UPI payment deep links
+  url_launcher: ^6.3.0
+
+  # Native share sheet (GST/HS-code product details)
+  share_plus: ^10.1.1
+
+  # Duty/Freight/Landed-Cost/RFQ report generation: PDF, saving the report as an image
+  pdf: ^3.11.1
+  printing: ^5.14.2
+  path_provider: ^2.1.4
+  gal: ^2.3.0
+
+  # RFQ report .docx export — builds a minimal valid Word Open XML zip
+  archive: ^3.6.1
+
+  # Real-time chat
+  web_socket_channel: ^3.0.1
+
+  # Voice notes in chat
+  record: ^6.0.0
+  audioplayers: ^6.1.0
+
+  # Forms & validation
+  intl: ^0.20.2
+
+  # Push notifications
+  firebase_core: ^3.1.0
+  firebase_messaging: ^15.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # Legacy/iOS icon: flattened onto the brand navy background (iOS can't have a transparent
+  # icon; older Android launchers that don't support adaptive icons get the same look
+  # instead of a default white square).
+  image_path: "assets/images/app_logo_flat.png"
+  min_sdk_android: 21
+  # Adaptive icon (Android 8+): true transparent foreground, logo scaled into the safe zone
+  # so no launcher mask (circle/squircle/rounded-square) crops it, over a solid navy
+  # background layer — no white anywhere.
+  adaptive_icon_background: "#0A1A33"
+  adaptive_icon_foreground: "assets/images/app_logo_adaptive_fg.png"
+
+# record's own version constraints resolved a record_linux release too old for the
+# record_platform_interface version pub picked (interface mismatch broke compilation on
+# every platform, not just Linux, since Dart type-checks the whole federated plugin graph).
+# Pinning record_linux to a release that matches fixes it.
+dependency_overrides:
+  record_linux: ^1.3.1
+
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/images/
+    - assets/icons/

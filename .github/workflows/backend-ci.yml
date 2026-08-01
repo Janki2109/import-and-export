@@ -1,0 +1,55 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: onebharat
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: Apply migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d onebharat -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: go test
+        run: go test ./... -v
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/onebharat?sslmode=disable
