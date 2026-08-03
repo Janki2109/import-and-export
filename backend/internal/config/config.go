@@ -24,6 +24,10 @@ type Config struct {
 
 	PlatformFeePercent float64
 	AutoReleaseDays    int
+	// AutoReleaseGraceHours — hours after the admin-notified alert before the cron actually
+	// releases escrow itself (Journey 5: "auto release actually releases"). Gives a human
+	// window to intervene (hold/dispute/refund) before money moves autonomously.
+	AutoReleaseGraceHours int
 
 	PremiumMembershipFee float64 // flat INR fee for a 30-day premium membership (legacy — see tier fees below)
 	FeaturedListingFee   float64 // flat INR fee for a 30-day featured placement
@@ -67,7 +71,18 @@ type Config struct {
 	MaxFailedLoginAttempts  int    // failed logins within LoginLockoutWindow before an account is temporarily locked
 	LoginLockoutWindowMin   int    // minutes
 	LoginLockoutDurationMin int    // minutes an account stays locked once the threshold is hit
+
+	// Razorpay Route (Contacts + Fund Accounts, created once on KYC approval so the user can
+	// later receive escrow-release payouts). Empty = KYC approval still works, Razorpay linkage
+	// is just skipped with a warning (dev/test environments without real Razorpay keys).
+	RazorpayKeyID     string
+	RazorpayKeySecret string
 }
+
+// knownPlaceholderJWTSecret is the value shipped in .env.example / dev .env files. Every token
+// this server issues is signed with JWTSecret, so if it's empty or still this placeholder,
+// anyone can forge a valid access token for any user/role by signing with the same known value.
+const knownPlaceholderJWTSecret = "change-this-to-a-long-random-string-in-production"
 
 func Load() *Config {
 	// .env is optional in production (env vars injected by platform e.g. Elastic Beanstalk)
@@ -75,19 +90,34 @@ func Load() *Config {
 		log.Println("no .env file found, relying on system environment variables")
 	}
 
+	env := getEnv("APP_ENV", "development")
+	jwtSecret := getEnv("JWT_SECRET", "")
+
+	// BUG FIX (C4/C5): previously an empty or placeholder JWT_SECRET was silently accepted,
+	// letting the server start (and stay running in production) with all issued tokens signed
+	// using a known/empty key. Fail fast in production; warn loudly in development so local
+	// setups without a real secret still run unchanged.
+	if jwtSecret == "" || jwtSecret == knownPlaceholderJWTSecret {
+		if env == "production" {
+			log.Fatal("FATAL: JWT_SECRET is empty or still set to the default placeholder value — refusing to start in production. Set JWT_SECRET to a long random secret.")
+		}
+		log.Println("WARNING: JWT_SECRET is empty or still the default placeholder value. This is insecure — set a real JWT_SECRET before deploying to production.")
+	}
+
 	return &Config{
-		Env:               getEnv("APP_ENV", "development"),
+		Env:               env,
 		Port:              getEnv("PORT", "8080"),
 		DatabaseURL:       getEnv("DATABASE_URL", ""),
-		JWTSecret:         getEnv("JWT_SECRET", ""),
+		JWTSecret:         jwtSecret,
 		JWTAccessTTLMin:   getEnvInt("JWT_ACCESS_TTL_MIN", 15),
 		JWTRefreshTTLDays: getEnvInt("JWT_REFRESH_TTL_DAYS", 30),
 
 		PlatformUPIVPA:       getEnv("PLATFORM_UPI_VPA", "placeholder@upi"),
 		PlatformUPIPayeeName: getEnv("PLATFORM_UPI_PAYEE_NAME", "One Bharat Export Import"),
 
-		PlatformFeePercent: getEnvFloat("PLATFORM_FEE_PERCENT", 2.0),
-		AutoReleaseDays:    getEnvInt("AUTO_RELEASE_DAYS", 3),
+		PlatformFeePercent:    getEnvFloat("PLATFORM_FEE_PERCENT", 2.0),
+		AutoReleaseDays:       getEnvInt("AUTO_RELEASE_DAYS", 3),
+		AutoReleaseGraceHours: getEnvInt("AUTO_RELEASE_GRACE_HOURS", 48),
 
 		PremiumMembershipFee: getEnvFloat("PREMIUM_MEMBERSHIP_FEE", 2999.0),
 		FeaturedListingFee:   getEnvFloat("FEATURED_LISTING_FEE", 1999.0),
@@ -119,10 +149,13 @@ func Load() *Config {
 		AdminBootstrapName:     getEnv("ADMIN_BOOTSTRAP_NAME", "Platform Admin"),
 
 		DocumentEncryptionKey:   getEnv("DOCUMENT_ENCRYPTION_KEY", ""),
-		SignedURLSecret:         getEnv("SIGNED_URL_SECRET", getEnv("JWT_SECRET", "")),
+		SignedURLSecret:         getEnv("SIGNED_URL_SECRET", jwtSecret),
 		MaxFailedLoginAttempts:  getEnvInt("MAX_FAILED_LOGIN_ATTEMPTS", 5),
 		LoginLockoutWindowMin:   getEnvInt("LOGIN_LOCKOUT_WINDOW_MIN", 15),
 		LoginLockoutDurationMin: getEnvInt("LOGIN_LOCKOUT_DURATION_MIN", 15),
+
+		RazorpayKeyID:     getEnv("RAZORPAY_KEY_ID", ""),
+		RazorpayKeySecret: getEnv("RAZORPAY_KEY_SECRET", ""),
 	}
 }
 

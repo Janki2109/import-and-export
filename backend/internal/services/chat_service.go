@@ -2,20 +2,59 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/security"
 )
 
 type ChatService struct {
-	chatRepo *repository.ChatRepository
-	userRepo *repository.UserRepository
-	hub      *ChatHub
+	chatRepo     *repository.ChatRepository
+	userRepo     *repository.UserRepository
+	orderRepo    *repository.OrderRepository
+	shipmentRepo *repository.ShipmentRepository
+	hub          *ChatHub
+	cipher       *security.AESCipher // nil = encryption not configured (dev/test only)
 }
 
-func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, hub *ChatHub) *ChatService {
-	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, hub: hub}
+func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, orderRepo *repository.OrderRepository, shipmentRepo *repository.ShipmentRepository, hub *ChatHub, cipher *security.AESCipher) *ChatService {
+	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, orderRepo: orderRepo, shipmentRepo: shipmentRepo, hub: hub, cipher: cipher}
+}
+
+// Journey 8 — "messages encrypted": content is AES-256-GCM encrypted before it ever reaches
+// the database (base64-encoded into the existing `content` TEXT column — no schema change
+// needed) and decrypted only in memory when read back out to an authorized participant.
+// decryptContent falls back to returning the value unchanged if it doesn't look like our
+// ciphertext envelope, so historic plaintext rows (written before DOCUMENT_ENCRYPTION_KEY was
+// set) keep displaying correctly instead of erroring.
+func (s *ChatService) encryptContent(content *string) (*string, error) {
+	if content == nil || s.cipher == nil {
+		return content, nil
+	}
+	ciphertext, err := s.cipher.Encrypt([]byte(*content))
+	if err != nil {
+		return nil, fmt.Errorf("encrypting message: %w", err)
+	}
+	encoded := "enc:" + base64.StdEncoding.EncodeToString(ciphertext)
+	return &encoded, nil
+}
+
+func (s *ChatService) decryptContent(content *string) *string {
+	if content == nil || s.cipher == nil || len(*content) < 4 || (*content)[:4] != "enc:" {
+		return content
+	}
+	raw, err := base64.StdEncoding.DecodeString((*content)[4:])
+	if err != nil {
+		return content
+	}
+	plaintext, err := s.cipher.Decrypt(raw)
+	if err != nil {
+		return content
+	}
+	decoded := string(plaintext)
+	return &decoded
 }
 
 // allowedPair — trade-partner chat spans Importer<->Exporter, Exporter<->Logistics, and
@@ -44,6 +83,13 @@ func allowedPair(roleA, roleB models.UserRole) bool {
 }
 
 // StartOrGetConversation validates the role pairing before creating/returning the conversation.
+//
+// BUG FIX (Journey 8): role-pair matching alone let any importer message any exporter (or any
+// logistics user message any importer/exporter) platform-wide with no actual trade
+// relationship. Now also requires a real relationship: importer<->exporter must share at
+// least one order; logistics<->importer/exporter requires the logistics user to actually be
+// assigned to a shipment on one of that party's orders ("logistics joins only after
+// assignment"). Admin/support chat is exempt — that's intentionally always reachable.
 func (s *ChatService) StartOrGetConversation(ctx context.Context, userID, otherUserID string) (*models.Conversation, error) {
 	if userID == otherUserID {
 		return nil, fmt.Errorf("cannot start a conversation with yourself")
@@ -61,7 +107,49 @@ func (s *ChatService) StartOrGetConversation(ctx context.Context, userID, otherU
 		return nil, fmt.Errorf("chat is only allowed between importer<->exporter, exporter<->logistics, or with platform support")
 	}
 
+	if user.Role != models.RoleAdmin && other.Role != models.RoleAdmin {
+		if err := s.requireRelationship(ctx, user, other); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.chatRepo.GetOrCreateConversation(ctx, userID, otherUserID)
+}
+
+func (s *ChatService) requireRelationship(ctx context.Context, user, other *models.User) error {
+	roles := map[models.UserRole]*models.User{user.Role: user, other.Role: other}
+
+	if imp, ok := roles[models.RoleImporter]; ok {
+		if exp, ok := roles[models.RoleExporter]; ok {
+			has, err := s.orderRepo.HasOrderBetween(ctx, imp.ID, exp.ID)
+			if err != nil {
+				return err
+			}
+			if !has {
+				return fmt.Errorf("chat is only available between an importer and exporter who share an order")
+			}
+			return nil
+		}
+	}
+	if log, ok := roles[models.RoleLogistics]; ok {
+		var counterparty *models.User
+		if roles[models.RoleImporter] != nil {
+			counterparty = roles[models.RoleImporter]
+		} else if roles[models.RoleExporter] != nil {
+			counterparty = roles[models.RoleExporter]
+		}
+		if counterparty != nil {
+			assigned, err := s.shipmentRepo.IsAssignedWithParty(ctx, log.ID, counterparty.ID)
+			if err != nil {
+				return err
+			}
+			if !assigned {
+				return fmt.Errorf("chat with logistics is only available once a logistics partner is assigned to one of your shipments")
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // SupportContact resolves the platform admin to message for "contact support" — the app
@@ -78,7 +166,14 @@ func (s *ChatService) SupportContact(ctx context.Context) (*models.User, error) 
 }
 
 func (s *ChatService) ListConversations(ctx context.Context, userID string) ([]models.ConversationSummary, error) {
-	return s.chatRepo.ListForUser(ctx, userID)
+	list, err := s.chatRepo.ListForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i].LastMessagePreview = s.decryptContent(list[i].LastMessagePreview)
+	}
+	return list, nil
 }
 
 type SendMessageInput struct {
@@ -101,17 +196,24 @@ func (s *ChatService) SendMessage(ctx context.Context, in SendMessageInput) (*mo
 		return nil, fmt.Errorf("not a participant in this conversation")
 	}
 
+	encryptedContent, err := s.encryptContent(in.Content)
+	if err != nil {
+		return nil, err
+	}
 	msg := &models.Message{
 		ConversationID: in.ConversationID,
 		SenderID:       in.SenderID,
 		Type:           in.Type,
-		Content:        in.Content,
+		Content:        encryptedContent,
 		FileURL:        in.FileURL,
 		QuotationID:    in.QuotationID,
 	}
 	if err := s.chatRepo.CreateMessage(ctx, msg); err != nil {
 		return nil, fmt.Errorf("send message: %w", err)
 	}
+	// The caller/recipient should see plaintext, not the stored ciphertext — encryption is
+	// for at-rest DB storage, not the WS transport (already TLS-secured).
+	msg.Content = in.Content
 
 	recipientID := conv.ParticipantOneID
 	if recipientID == in.SenderID {
@@ -122,6 +224,19 @@ func (s *ChatService) SendMessage(ctx context.Context, in SendMessageInput) (*mo
 	return msg, nil
 }
 
+// GetConversationForParticipant — used by the WS handler to resolve a typing event's
+// recipient; same participant check as ListMessages/SendMessage.
+func (s *ChatService) GetConversationForParticipant(ctx context.Context, conversationID, requesterID string) (*models.Conversation, error) {
+	conv, err := s.chatRepo.GetConversation(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if requesterID != conv.ParticipantOneID && requesterID != conv.ParticipantTwoID {
+		return nil, fmt.Errorf("not a participant in this conversation")
+	}
+	return conv, nil
+}
+
 func (s *ChatService) ListMessages(ctx context.Context, conversationID, requesterID string) ([]models.Message, error) {
 	conv, err := s.chatRepo.GetConversation(ctx, conversationID)
 	if err != nil {
@@ -130,9 +245,28 @@ func (s *ChatService) ListMessages(ctx context.Context, conversationID, requeste
 	if requesterID != conv.ParticipantOneID && requesterID != conv.ParticipantTwoID {
 		return nil, fmt.Errorf("not a participant in this conversation")
 	}
-	return s.chatRepo.ListMessages(ctx, conversationID, 100, 0)
+	messages, err := s.chatRepo.ListMessages(ctx, conversationID, 100, 0)
+	if err != nil {
+		return nil, err
+	}
+	for i := range messages {
+		messages[i].Content = s.decryptContent(messages[i].Content)
+	}
+	return messages, nil
 }
 
+// MarkRead — Journey 8 "read receipts": also pushes a live "read" event to the other
+// participant (the original sender) so their UI can flip the tick without needing to reload.
 func (s *ChatService) MarkRead(ctx context.Context, conversationID, readerID string) error {
-	return s.chatRepo.MarkRead(ctx, conversationID, readerID)
+	if err := s.chatRepo.MarkRead(ctx, conversationID, readerID); err != nil {
+		return err
+	}
+	if conv, err := s.chatRepo.GetConversation(ctx, conversationID); err == nil {
+		senderID := conv.ParticipantOneID
+		if senderID == readerID {
+			senderID = conv.ParticipantTwoID
+		}
+		s.hub.SendToUser(senderID, map[string]interface{}{"type": "read", "conversation_id": conversationID})
+	}
+	return nil
 }

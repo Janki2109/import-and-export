@@ -17,6 +17,9 @@ class KYCService {
     String? gstDocUrl,
     String? iecDocUrl,
     String? addressDocUrl,
+    String? bankAccountHolderName,
+    String? bankAccountNumber,
+    String? bankIfsc,
   }) async {
     await _client.post('/kyc/submit', data: {
       'pan_number': panNumber,
@@ -27,6 +30,9 @@ class KYCService {
       'gst_doc_url': gstDocUrl,
       'iec_doc_url': iecDocUrl,
       'address_doc_url': addressDocUrl,
+      'bank_account_holder_name': bankAccountHolderName,
+      'bank_account_number': bankAccountNumber,
+      'bank_ifsc': bankIfsc,
     });
   }
 }

@@ -103,10 +103,14 @@ func (r *ShipmentRepository) UpdateStatus(ctx context.Context, shipmentID, statu
 		timeCol = ", delivered_at = now()"
 	}
 
-	query := fmt.Sprintf(`UPDATE shipments SET status = $1%s WHERE id = $2 RETURNING order_id`, timeCol)
+	// BUG FIX (C9): previously matched WHERE id = $2 only — updatedBy (the logistics user's own ID)
+	// was recorded in shipment_events but never checked against the shipment's assigned
+	// logistics_id, so any authenticated logistics-role user could update the status of ANY
+	// shipment, not just ones assigned to them. Constraining the WHERE clause closes that.
+	query := fmt.Sprintf(`UPDATE shipments SET status = $1%s WHERE id = $2 AND logistics_id = $3 RETURNING order_id`, timeCol)
 	var orderID string
-	if err := tx.QueryRow(ctx, query, status, shipmentID).Scan(&orderID); err != nil {
-		return fmt.Errorf("update shipment status: %w", err)
+	if err := tx.QueryRow(ctx, query, status, shipmentID, updatedBy).Scan(&orderID); err != nil {
+		return fmt.Errorf("update shipment status: shipment not found or not assigned to you: %w", err)
 	}
 
 	_, err = tx.Exec(ctx, `INSERT INTO shipment_events (shipment_id, status, location, remarks, created_by)
@@ -133,6 +137,21 @@ func (r *ShipmentRepository) UpdateStatus(ctx context.Context, shipmentID, statu
 	}
 
 	return tx.Commit(ctx)
+}
+
+// IsAssignedWithParty — Journey 8: whether logisticsID is assigned to any shipment whose
+// order's importer or exporter is otherUserID. Used to gate logistics<->importer/exporter
+// chat to "joins only after assignment" instead of any logistics user being able to message
+// any importer/exporter with no relationship.
+func (r *ShipmentRepository) IsAssignedWithParty(ctx context.Context, logisticsID, otherUserID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM shipments s
+			JOIN orders o ON o.id = s.order_id
+			WHERE s.logistics_id = $1 AND (o.importer_id = $2 OR o.exporter_id = $2)
+		)`, logisticsID, otherUserID).Scan(&exists)
+	return exists, err
 }
 
 func (r *ShipmentRepository) ListByLogistics(ctx context.Context, logisticsID string, limit, offset int) ([]models.Shipment, error) {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -117,9 +118,27 @@ type counterOfferRequest struct {
 	Incoterm          *string    `json:"incoterm"`
 	PaymentTerms      *string    `json:"payment_terms"`
 	Packaging         *string    `json:"packaging"`
-	ValidityDate      *time.Time `json:"validity_date"`
-	SpecialConditions *string    `json:"special_conditions"`
-	Remarks           *string    `json:"remarks"`
+	ValidityDate      *string `json:"validity_date"`
+	SpecialConditions *string `json:"special_conditions"`
+	Remarks           *string `json:"remarks"`
+}
+
+// BUG FIX (C15): the frontend sends validity_date as a bare "YYYY-MM-DD" string
+// (negotiation_service.dart: validityDate?.toIso8601String().substring(0, 10)), but binding
+// straight into *time.Time requires full RFC3339 — every counter-offer with a validity date set
+// failed JSON binding with a 400. Accepts both date-only and RFC3339 instead of requiring the
+// frontend to change its wire format.
+func parseValidityDate(raw *string) (*time.Time, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse("2006-01-02", *raw); err == nil {
+		return &t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, *raw); err == nil {
+		return &t, nil
+	}
+	return nil, fmt.Errorf("invalid validity_date format: %s", *raw)
 }
 
 // CounterOffer — POST /negotiations/counter/:id
@@ -131,11 +150,16 @@ func (h *NegotiationHandler) CounterOffer(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	validityDate, err := parseValidityDate(req.ValidityDate)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	offer, err := h.svc.CounterOffer(c.Request.Context(), c.Param("id"), userID, role, services.OfferInput{
 		UnitPrice: req.UnitPrice, Currency: req.Currency, Quantity: req.Quantity, MOQ: req.MOQ,
 		DeliveryDays: req.DeliveryDays, DispatchDays: req.DispatchDays, ShippingMode: req.ShippingMode,
 		Incoterm: req.Incoterm, PaymentTerms: req.PaymentTerms, Packaging: req.Packaging,
-		ValidityDate: req.ValidityDate, SpecialConditions: req.SpecialConditions, Remarks: req.Remarks,
+		ValidityDate: validityDate, SpecialConditions: req.SpecialConditions, Remarks: req.Remarks,
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())

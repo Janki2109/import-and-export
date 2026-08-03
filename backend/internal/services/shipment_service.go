@@ -12,14 +12,21 @@ import (
 type ShipmentService struct {
 	shipmentRepo *repository.ShipmentRepository
 	orderRepo    *repository.OrderRepository
+	compliance   *ComplianceService
 	notification *NotificationService
 }
 
-func NewShipmentService(shipmentRepo *repository.ShipmentRepository, orderRepo *repository.OrderRepository, notification *NotificationService) *ShipmentService {
-	return &ShipmentService{shipmentRepo: shipmentRepo, orderRepo: orderRepo, notification: notification}
+func NewShipmentService(shipmentRepo *repository.ShipmentRepository, orderRepo *repository.OrderRepository, compliance *ComplianceService, notification *NotificationService) *ShipmentService {
+	return &ShipmentService{shipmentRepo: shipmentRepo, orderRepo: orderRepo, compliance: compliance, notification: notification}
 }
 
 // AssignLogistics — exporter-only action, order must be in payment_held/accepted state.
+//
+// BUG FIX (Journey 6): "compliance should block shipment if incomplete" was built
+// (ComplianceService.ShipmentBlockStatus) but never actually invoked from this flow — any
+// order could be assigned to a logistics partner regardless of outstanding mandatory
+// compliance documents. Now blocks assignment (not later stages — those still aren't
+// touched, keeping the change scoped) until every mandatory item is verified.
 func (s *ShipmentService) AssignLogistics(ctx context.Context, orderID, exporterID, logisticsID, trackingNumber, carrierName string) error {
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
@@ -30,6 +37,9 @@ func (s *ShipmentService) AssignLogistics(ctx context.Context, orderID, exporter
 	}
 	if order.Status != models.OrderPaymentHeld && order.Status != models.OrderAccepted {
 		return fmt.Errorf("cannot assign logistics: order status is %s", order.Status)
+	}
+	if blocked, missing, err := s.compliance.ShipmentBlockStatus(ctx, orderID, exporterID, models.RoleExporter); err == nil && blocked {
+		return fmt.Errorf("cannot assign logistics: mandatory compliance documents outstanding: %s", strings.Join(missing, ", "))
 	}
 	if err := s.shipmentRepo.AssignLogistics(ctx, orderID, logisticsID, trackingNumber, carrierName); err != nil {
 		return err
@@ -55,10 +65,9 @@ var validShipmentStatuses = map[string]bool{
 	"exception":              true,
 }
 
-// UpdateShipmentStatus — logistics-only, must own the shipment.
+// UpdateShipmentStatus — logistics-only, must own the shipment (enforced by the WHERE clause
+// in ShipmentRepository.UpdateStatus, not here).
 func (s *ShipmentService) UpdateShipmentStatus(ctx context.Context, shipmentID, logisticsID, status, location, remarks string) error {
-	// (In a fuller implementation we'd verify shipment.logistics_id == logisticsID here via a lookup.
-	// Keeping the repo call direct for now — add ownership check before production go-live.)
 	if !validShipmentStatuses[status] {
 		return fmt.Errorf("invalid status: %s", status)
 	}
@@ -93,16 +102,27 @@ func statusLabel(status string) string {
 	return strings.Join(words, " ")
 }
 
+// BUG FIX (Journey 6): previously accepted a POD upload from ANY logistics-role user for ANY
+// shipment_id, not just the shipment's own assigned partner — mirrors the same gap C9 fixed
+// for UpdateShipmentStatus.
 func (s *ShipmentService) UploadPOD(ctx context.Context, pod *models.PODDocument) error {
+	shipment, err := s.shipmentRepo.GetByID(ctx, pod.ShipmentID)
+	if err != nil {
+		return err
+	}
+	if shipment == nil {
+		return fmt.Errorf("shipment not found")
+	}
+	if shipment.LogisticsID == nil || *shipment.LogisticsID != pod.UploadedBy {
+		return fmt.Errorf("not authorized: this shipment is not assigned to you")
+	}
+
 	if err := s.shipmentRepo.AddPOD(ctx, pod); err != nil {
 		return err
 	}
-	shipment, err := s.shipmentRepo.GetByID(ctx, pod.ShipmentID)
-	if err == nil && shipment != nil {
-		order, orderErr := s.orderRepo.GetByID(ctx, shipment.OrderID)
-		if orderErr == nil {
-			_ = s.notification.Send(ctx, order.ImporterID, "Shipment Delivered", fmt.Sprintf("Proof of delivery uploaded for order %s. Please confirm receipt.", order.OrderNumber), "shipment", &order.ID)
-		}
+	order, orderErr := s.orderRepo.GetByID(ctx, shipment.OrderID)
+	if orderErr == nil {
+		_ = s.notification.Send(ctx, order.ImporterID, "Shipment Delivered", fmt.Sprintf("Proof of delivery uploaded for order %s. Please confirm receipt.", order.OrderNumber), "shipment", &order.ID)
 	}
 	return nil
 }

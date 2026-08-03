@@ -2,11 +2,13 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/mailer"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/security"
 )
 
 type AdminService struct {
@@ -20,10 +22,11 @@ type AdminService struct {
 	chatRepo     *repository.ChatRepository
 	orderSvc     *OrderService
 	notification *NotificationService
+	chatCipher   *security.AESCipher
 }
 
-func NewAdminService(repo *repository.AdminRepository, refRepo *repository.ReferenceRepository, productRepo *repository.ProductRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, settingsRepo *repository.SettingsRepository, userRepo *repository.UserRepository, chatRepo *repository.ChatRepository, orderSvc *OrderService, notification *NotificationService) *AdminService {
-	return &AdminService{repo: repo, refRepo: refRepo, productRepo: productRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, settingsRepo: settingsRepo, userRepo: userRepo, chatRepo: chatRepo, orderSvc: orderSvc, notification: notification}
+func NewAdminService(repo *repository.AdminRepository, refRepo *repository.ReferenceRepository, productRepo *repository.ProductRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, settingsRepo *repository.SettingsRepository, userRepo *repository.UserRepository, chatRepo *repository.ChatRepository, orderSvc *OrderService, notification *NotificationService, chatCipher *security.AESCipher) *AdminService {
+	return &AdminService{repo: repo, refRepo: refRepo, productRepo: productRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, settingsRepo: settingsRepo, userRepo: userRepo, chatRepo: chatRepo, orderSvc: orderSvc, notification: notification, chatCipher: chatCipher}
 }
 
 // ---------------- Settings ----------------
@@ -175,7 +178,7 @@ func (s *AdminService) GetEscrowSummary(ctx context.Context) (*repository.Escrow
 // without requiring a dispute to exist (reuses the same release path the importer's
 // "Confirm Delivery" button uses).
 func (s *AdminService) ReleasePayment(ctx context.Context, orderID, adminID string) error {
-	return s.orderSvc.ConfirmDeliveryAndRelease(ctx, orderID, adminID)
+	return s.orderSvc.ConfirmDeliveryAndRelease(ctx, orderID, adminID, false)
 }
 
 func (s *AdminService) HoldPayment(ctx context.Context, orderID, adminID string) error {
@@ -240,9 +243,39 @@ func (s *AdminService) SetConversationArchived(ctx context.Context, id string, a
 }
 
 // GetConversationMessages — admin can view any conversation's messages, unlike
-// ChatService.ListMessages which restricts to the two participants. Read-only.
-func (s *AdminService) GetConversationMessages(ctx context.Context, conversationID string) ([]models.Message, error) {
-	return s.chatRepo.ListMessages(ctx, conversationID, 200, 0)
+// ChatService.ListMessages which restricts to the two participants. Read-only (no admin
+// "send message" endpoint exists).
+//
+// BUG FIX (Journey 8): "admin can view only for compliance purposes" requires this to be
+// traceable, but no audit log was ever recorded when an admin viewed a conversation — added
+// here. Also decrypts message content (chat is now encrypted at rest per Journey 8) using the
+// same cipher ChatService uses, so admin viewing doesn't just show ciphertext.
+func (s *AdminService) GetConversationMessages(ctx context.Context, conversationID, adminID string) ([]models.Message, error) {
+	messages, err := s.chatRepo.ListMessages(ctx, conversationID, 200, 0)
+	if err != nil {
+		return nil, err
+	}
+	for i := range messages {
+		messages[i].Content = s.decryptChatContent(messages[i].Content)
+	}
+	_ = s.auditRepo.Record(ctx, adminID, "chat.admin_view", "conversation", conversationID, nil)
+	return messages, nil
+}
+
+func (s *AdminService) decryptChatContent(content *string) *string {
+	if content == nil || s.chatCipher == nil || len(*content) < 4 || (*content)[:4] != "enc:" {
+		return content
+	}
+	raw, err := base64.StdEncoding.DecodeString((*content)[4:])
+	if err != nil {
+		return content
+	}
+	plaintext, err := s.chatCipher.Decrypt(raw)
+	if err != nil {
+		return content
+	}
+	decoded := string(plaintext)
+	return &decoded
 }
 
 // BlockUser reuses the same is_active flag Suspend already uses (confirmed to block login

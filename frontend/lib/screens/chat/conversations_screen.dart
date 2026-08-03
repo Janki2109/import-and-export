@@ -82,7 +82,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                               conversation: c,
                               onTap: () async {
                                 await Navigator.of(context).push(
-                                  MaterialPageRoute(builder: (_) => ChatScreen(conversationId: c.id, otherUserName: c.otherUserName)),
+                                  MaterialPageRoute(builder: (_) => ChatScreen(conversationId: c.id, otherUserName: c.otherUserName, otherUserId: c.otherUserId)),
                                 );
                                 _refresh();
                               },

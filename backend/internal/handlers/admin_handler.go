@@ -486,7 +486,8 @@ func (h *AdminHandler) ListConversations(c *gin.Context) {
 }
 
 func (h *AdminHandler) GetConversationMessages(c *gin.Context) {
-	messages, err := h.adminService.GetConversationMessages(c.Request.Context(), c.Param("id"))
+	adminID := c.GetString("user_id")
+	messages, err := h.adminService.GetConversationMessages(c.Request.Context(), c.Param("id"), adminID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return

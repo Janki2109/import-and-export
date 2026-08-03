@@ -52,16 +52,23 @@ func (r *EscrowRepository) MarkHeld(ctx context.Context, orderID, rzpPaymentID s
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `
+	// BUG FIX: `($2 || ' days')::interval` concatenates a Go int with a text literal via
+	// Postgres's `||` operator, which requires both operands to already be text — pgx has no
+	// encode plan for binding a bare int parameter as text, so this failed on every single
+	// call (see docs/BUGFIXES.md). make_interval() takes the int directly, correctly typed.
+	cmd, err := tx.Exec(ctx, `
 		UPDATE escrow_payments
 		SET status = 'held',
 		    razorpay_payment_id = $1,
 		    held_at = now(),
-		    release_due_at = now() + ($2 || ' days')::interval
+		    release_due_at = now() + make_interval(days => $2)
 		WHERE order_id = $3 AND status IN ('created','authorized')`,
 		rzpPaymentID, releaseDueDays, orderID)
 	if err != nil {
 		return fmt.Errorf("update escrow to held: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("escrow payment for order %s is not in a holdable state", orderID)
 	}
 
 	_, err = tx.Exec(ctx, `UPDATE orders SET status = 'payment_held' WHERE id = $1`, orderID)
@@ -123,21 +130,44 @@ func (r *EscrowRepository) MarkReleased(ctx context.Context, orderID, exporterID
 
 // MarkRefunded — used when order is cancelled before delivery / dispute resolved in importer's
 // favor / admin directly refunds. Accepts escrow in either 'held' or 'on_hold'.
-func (r *EscrowRepository) MarkRefunded(ctx context.Context, orderID string) error {
+//
+// BUG FIX: this previously (a) never checked whether the escrow UPDATE actually matched a
+// row — an already-released or already-refunded escrow would silently no-op that statement
+// while the *unconditional* second UPDATE still flipped orders.status to 'refunded' anyway,
+// desynchronizing order/escrow state with no error; and (b) never wrote any ledger entries,
+// so a "successful" refund moved no money at all — the platform's held liability was never
+// reversed and the importer was never credited back. Both are fixed below: the escrow update
+// result is checked before proceeding, and the same debit/credit ledger pair MarkHeld/
+// MarkReleased already use for their transitions is mirrored here for the reversal.
+func (r *EscrowRepository) MarkRefunded(ctx context.Context, orderID, importerID string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
+	var amount float64
+	err = tx.QueryRow(ctx, `
 		UPDATE escrow_payments SET status = 'refunded', refunded_at = now()
-		WHERE order_id = $1 AND status IN ('held', 'on_hold')`, orderID); err != nil {
-		return err
+		WHERE order_id = $1 AND status IN ('held', 'on_hold')
+		RETURNING amount`, orderID).Scan(&amount)
+	if err != nil {
+		return fmt.Errorf("escrow payment for order %s is not in a refundable state: %w", orderID, err)
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'refunded' WHERE id = $1`, orderID); err != nil {
 		return err
+	}
+
+	// Ledger: reverse the platform's held liability, credit the importer back in full.
+	_, err = tx.Exec(ctx, `
+		INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
+		VALUES
+			($1, NULL, 'debit', $2, 'Escrow refunded — held liability reversed', $3),
+			($1, $4, 'credit', $2, 'Refund credited', $3)`,
+		orderID, amount, orderID, importerID)
+	if err != nil {
+		return fmt.Errorf("ledger entries: %w", err)
 	}
 
 	return tx.Commit(ctx)

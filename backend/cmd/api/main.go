@@ -15,6 +15,7 @@ import (
 	"github.com/jayashri-infotech/onebharat-backend/internal/services"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/database"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/fcm"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/razorpay"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/security"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/storage"
 )
@@ -77,6 +78,7 @@ func main() {
 	membershipRepo := repository.NewMembershipRepository(db)
 	advertisementRepo := repository.NewAdvertisementRepository(db)
 	companyRepo := repository.NewCompanyRepository(db)
+	ratingRepo := repository.NewRatingRepository(db)
 	loginAttemptRepo := repository.NewLoginAttemptRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 	settingsRepo := repository.NewSettingsRepository(db)
@@ -98,19 +100,33 @@ func main() {
 		}
 	}
 	complianceService := services.NewComplianceService(complianceRepo, orderRepo, companyRepo, shipmentRepo, notificationService)
-	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, cfg, notificationService, complianceService)
+	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, cfg, notificationService, complianceService)
 	negotiationService := services.NewNegotiationService(negotiationRepo, rfqRepo, quotationRepo, auditLogRepo, notificationService)
 	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, auditLogRepo, notificationService)
-	kycService := services.NewKYCService(kycRepo, userRepo, auditLogRepo, notificationService)
-	shipmentService := services.NewShipmentService(shipmentRepo, orderRepo, notificationService)
+	razorpayClient := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)
+	kycService := services.NewKYCService(kycRepo, userRepo, auditLogRepo, notificationService, razorpayClient)
+	shipmentService := services.NewShipmentService(shipmentRepo, orderRepo, complianceService, notificationService)
 	rfqService := services.NewRFQService(rfqRepo, userRepo, notificationService)
 	quotationService := services.NewQuotationService(quotationRepo, rfqRepo, orderService, notificationService)
-	walletService := services.NewWalletService(walletRepo, userRepo, escrowRepo, notificationService)
+	walletService := services.NewWalletService(walletRepo, userRepo, escrowRepo, kycRepo, notificationService)
 	documentService := services.NewDocumentService(documentRepo, orderRepo, userRepo, shipmentRepo)
 	searchService := services.NewSearchService(referenceRepo)
 	aiSearchService := services.NewAISearchService(referenceRepo, cfg)
 	chatHub := services.NewChatHub()
-	chatService := services.NewChatService(chatRepo, userRepo, chatHub)
+	// Journey 8 — "messages encrypted": reuses the same at-rest encryption secret already used
+	// for document storage (DOCUMENT_ENCRYPTION_KEY). nil cipher (key unset) means chat
+	// messages are stored in plaintext — fine for dev/test, must be set before real use.
+	var chatCipher *security.AESCipher
+	if cfg.DocumentEncryptionKey != "" {
+		if c, err := security.NewAESCipherFromPassphrase(cfg.DocumentEncryptionKey); err != nil {
+			log.Printf("⚠️  chat encryption cipher init failed, messages will be stored in plaintext: %v", err)
+		} else {
+			chatCipher = c
+		}
+	} else {
+		log.Println("⚠️  DOCUMENT_ENCRYPTION_KEY not set — chat messages will be stored in plaintext")
+	}
+	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher)
 	uploadService := services.NewUploadService(storageService)
 	disputeService := services.NewDisputeService(disputeRepo, orderRepo, escrowRepo, userRepo, auditLogRepo, orderService, notificationService)
 	fleetService := services.NewFleetService(fleetRepo)
@@ -118,9 +134,9 @@ func main() {
 	membershipService := services.NewMembershipService(membershipRepo, cfg)
 	advertisementService := services.NewAdvertisementService(advertisementRepo)
 	auditService := services.NewAuditService(auditLogRepo)
-	companyService := services.NewCompanyService(companyRepo)
+	companyService := services.NewCompanyService(companyRepo, productRepo, orderRepo, ratingRepo)
 	profileService := services.NewProfileService(userRepo)
-	adminService := services.NewAdminService(adminRepo, referenceRepo, productRepo, escrowRepo, auditLogRepo, settingsRepo, userRepo, chatRepo, orderService, notificationService)
+	adminService := services.NewAdminService(adminRepo, referenceRepo, productRepo, escrowRepo, auditLogRepo, settingsRepo, userRepo, chatRepo, orderService, notificationService, chatCipher)
 	fraudService := services.NewFraudService(loginAttemptRepo, orderRepo, userRepo, disputeRepo, rfqRepo, quotationRepo, securityFlagRepo, notificationService)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo, membershipRepo)
 	directoryService := services.NewDirectoryService(directoryRepo)
@@ -164,6 +180,14 @@ func main() {
 	}
 
 	r := gin.Default()
+	// KNOWN ISSUE (C6/C7, not fixed): these routes serve ./storage/documents and
+	// cfg.LocalStorageRoot with no authentication — anyone who guesses/enumerates a filename can
+	// download it, bypassing the separate signed-URL system (SecurityHandler.DownloadSecure)
+	// entirely. Gating this behind auth was tried and reverted: order_documents_screen.dart opens
+	// these URLs via launchUrl() in an external browser/app, which cannot attach an Authorization
+	// header, so requiring auth here 401s every existing "view document" link. A real fix needs a
+	// frontend change (route documents through the signed-URL flow instead) which is out of scope
+	// under the "do not change UI/flow" constraint — flagged for the user to address deliberately.
 	r.Static("/files/documents", "./storage/documents")
 	// Serves files stored by the local storage provider (STORAGE_PROVIDER=local). Under S3,
 	// GeneratePublicUrl never returns a path under /files/uploads, so this route is simply
@@ -182,7 +206,7 @@ func main() {
 	})
 
 	// Auto-release cron: checks every 30 min for orders past their release_due_at window.
-	cron.StartAutoReleaseJob(orderRepo, orderService, escrowRepo, 30*time.Minute)
+	cron.StartAutoReleaseJob(orderRepo, orderService, escrowRepo, 30*time.Minute, cfg.AutoReleaseGraceHours)
 
 	// Fraud detection sweep: checks every 15 min for new suspicious-activity signals.
 	cron.StartFraudSweepJob(fraudService, 15*time.Minute)

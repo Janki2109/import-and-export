@@ -22,6 +22,7 @@ class CompanyService {
     String? website,
     String? productsImported,
     String? preferredShippingMode,
+    List<String>? certifications,
   }) async {
     final res = await _client.post('/company', data: {
       'company_name': companyName,
@@ -33,7 +34,36 @@ class CompanyService {
       'website': website,
       'products_imported': productsImported,
       'preferred_shipping_mode': preferredShippingMode,
+      'certifications': certifications,
     });
     return Company.fromJson(res.data['data']);
+  }
+
+  /// Journey 3 — importer-facing supplier directory: browse/search exporter companies.
+  Future<List<DirectoryListing>> listDirectory({String search = ''}) async {
+    final res = await _client.get('/companies', query: {'search': search});
+    final list = res.data['data'] as List? ?? [];
+    return list.map((e) => DirectoryListing.fromJson(e)).toList();
+  }
+
+  /// Journey 3 — open a company profile: details, certifications, products, ratings,
+  /// average response time, all in one call.
+  Future<CompanyProfile> getProfile(String companyId) async {
+    final res = await _client.get('/companies/$companyId');
+    return CompanyProfile.fromJson(res.data['data']);
+  }
+
+  Future<List<CompanyRating>> listRatings(String companyId) async {
+    final res = await _client.get('/companies/$companyId/ratings');
+    final list = res.data['data'] as List? ?? [];
+    return list.map((e) => CompanyRating.fromJson(e)).toList();
+  }
+
+  Future<void> rateCompany(String companyId, {required String orderId, required int score, String? comment}) async {
+    await _client.post('/companies/$companyId/ratings', data: {
+      'order_id': orderId,
+      'score': score,
+      'comment': comment,
+    });
   }
 }

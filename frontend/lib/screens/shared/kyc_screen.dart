@@ -27,6 +27,9 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
   final _gstNumberCtrl = TextEditingController();
   final _iecCodeCtrl = TextEditingController();
   final _businessLicenseCtrl = TextEditingController();
+  final _bankAccountHolderNameCtrl = TextEditingController();
+  final _bankAccountNumberCtrl = TextEditingController();
+  final _bankIfscCtrl = TextEditingController();
 
   Map<String, dynamic>? _status;
   bool _loadingStatus = true;
@@ -48,6 +51,9 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
           _gstNumberCtrl.text = status['gst_number'] ?? '';
           _iecCodeCtrl.text = status['iec_code'] ?? '';
           _businessLicenseCtrl.text = status['business_license'] ?? '';
+          _bankAccountHolderNameCtrl.text = status['bank_account_holder_name'] ?? '';
+          _bankAccountNumberCtrl.text = status['bank_account_number'] ?? '';
+          _bankIfscCtrl.text = status['bank_ifsc'] ?? '';
         });
       }
     } catch (_) {
@@ -68,6 +74,9 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
         gstDocUrl: docUrls['gst'] ?? _status?['gst_doc_url'],
         iecDocUrl: docUrls['iec'] ?? _status?['iec_doc_url'],
         addressDocUrl: docUrls['address'] ?? _status?['address_doc_url'],
+        bankAccountHolderName: _bankAccountHolderNameCtrl.text.trim().isEmpty ? null : _bankAccountHolderNameCtrl.text.trim(),
+        bankAccountNumber: _bankAccountNumberCtrl.text.trim().isEmpty ? null : _bankAccountNumberCtrl.text.trim(),
+        bankIfsc: _bankIfscCtrl.text.trim().isEmpty ? null : _bankIfscCtrl.text.trim(),
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -100,6 +109,9 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
                   gstNumberCtrl: _gstNumberCtrl,
                   iecCodeCtrl: _iecCodeCtrl,
                   businessLicenseCtrl: _businessLicenseCtrl,
+                  bankAccountHolderNameCtrl: _bankAccountHolderNameCtrl,
+                  bankAccountNumberCtrl: _bankAccountNumberCtrl,
+                  bankIfscCtrl: _bankIfscCtrl,
                   submitting: _submitting,
                   onSubmit: _submit,
                 ),
@@ -115,6 +127,9 @@ class _KYCForm extends StatefulWidget {
   final TextEditingController gstNumberCtrl;
   final TextEditingController iecCodeCtrl;
   final TextEditingController businessLicenseCtrl;
+  final TextEditingController bankAccountHolderNameCtrl;
+  final TextEditingController bankAccountNumberCtrl;
+  final TextEditingController bankIfscCtrl;
   final bool submitting;
   final void Function(Map<String, String?> docUrls) onSubmit;
 
@@ -124,6 +139,9 @@ class _KYCForm extends StatefulWidget {
     required this.gstNumberCtrl,
     required this.iecCodeCtrl,
     required this.businessLicenseCtrl,
+    required this.bankAccountHolderNameCtrl,
+    required this.bankAccountNumberCtrl,
+    required this.bankIfscCtrl,
     required this.submitting,
     required this.onSubmit,
   });
@@ -217,6 +235,32 @@ class _KYCFormState extends State<_KYCForm> {
               existingUrl: widget.status?['address_doc_url'],
               enabled: !isVerified,
               onUploaded: (url) => setState(() => _docUrls['address'] = url),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _SectionCard(
+          icon: Icons.account_balance_outlined,
+          title: 'Payout Bank Account',
+          children: [
+            TextFormField(
+              controller: widget.bankAccountHolderNameCtrl,
+              enabled: !isVerified,
+              decoration: const InputDecoration(labelText: 'Account Holder Name', prefixIcon: Icon(Icons.person_outline)),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: widget.bankAccountNumberCtrl,
+              enabled: !isVerified,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Account Number', prefixIcon: Icon(Icons.account_balance_outlined)),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: widget.bankIfscCtrl,
+              enabled: !isVerified,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(labelText: 'IFSC Code', prefixIcon: Icon(Icons.pin_outlined)),
             ),
           ],
         ),

@@ -120,7 +120,7 @@ func (h *OrderHandler) ConfirmDelivery(c *gin.Context) {
 		return
 	}
 
-	if err := h.orderService.ConfirmDeliveryAndRelease(c.Request.Context(), req.OrderID, importerID); err != nil {
+	if err := h.orderService.ConfirmDeliveryAndRelease(c.Request.Context(), req.OrderID, importerID, true); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}

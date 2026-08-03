@@ -24,6 +24,10 @@ type createRFQRequest struct {
 	TargetPrice        *float64 `json:"target_price"`
 	DestinationCountry string   `json:"destination_country" binding:"required"`
 	Description        *string  `json:"description"`
+	// TargetExporterIDs — optional; when set, this RFQ is sent only to these exporters
+	// (Journey 3: "request quotation" from a specific company profile) instead of the open
+	// marketplace broadcast.
+	TargetExporterIDs []string `json:"target_exporter_ids"`
 }
 
 // CreateRFQ — importer only.
@@ -45,6 +49,7 @@ func (h *RFQHandler) CreateRFQ(c *gin.Context) {
 		TargetPrice:        req.TargetPrice,
 		DestinationCountry: req.DestinationCountry,
 		Description:        req.Description,
+		TargetExporterIDs:  req.TargetExporterIDs,
 	})
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
@@ -53,9 +58,11 @@ func (h *RFQHandler) CreateRFQ(c *gin.Context) {
 	response.Success(c, http.StatusCreated, rfq)
 }
 
-// ListOpenRFQs — browsed by exporters looking for RFQs to quote against.
+// ListOpenRFQs — browsed by exporters looking for RFQs to quote against. Only RFQs that are
+// either untargeted (open marketplace) or specifically targeted at this exporter are returned.
 func (h *RFQHandler) ListOpenRFQs(c *gin.Context) {
-	rfqs, err := h.rfqService.ListOpen(c.Request.Context())
+	exporterID := c.GetString("user_id")
+	rfqs, err := h.rfqService.ListOpen(c.Request.Context(), exporterID)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return

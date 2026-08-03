@@ -1,5 +1,9 @@
 enum UserRole { importer, exporter, logistics, admin }
 
+// BUG FIX (C14): an unrecognized role string previously fell through to UserRole.admin — the
+// most privileged role — instead of failing safe. The backend still gates actual admin API calls
+// by its own auth check, but this could show admin-only navigation/UI to a misclassified user on
+// the client. Falls back to the least-privileged role instead.
 UserRole roleFromString(String s) {
   switch (s) {
     case 'importer':
@@ -8,8 +12,10 @@ UserRole roleFromString(String s) {
       return UserRole.exporter;
     case 'logistics':
       return UserRole.logistics;
-    default:
+    case 'admin':
       return UserRole.admin;
+    default:
+      return UserRole.importer;
   }
 }
 

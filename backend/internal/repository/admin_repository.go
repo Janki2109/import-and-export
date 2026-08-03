@@ -276,26 +276,23 @@ func (r *AdminRepository) ListAllWallets(ctx context.Context) ([]AdminWalletRow,
 
 // ---------------- Withdrawal Requests ----------------
 
-// AdminWithdrawalRow — a withdrawal debit from the ledger, with its status derived the same
-// way the frontend already does (see wallet_transaction_helpers.dart): a reference_id still
-// starting with "MANUAL-PENDING-" means ops hasn't paid it out yet.
+// AdminWithdrawalRow — a row from withdrawal_requests (Journey 5: request stays pending, with
+// no ledger effect at all, until an admin approves or rejects it here).
 type AdminWithdrawalRow struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	UserName    string    `json:"user_name"`
-	Role        string    `json:"role"`
-	Amount      float64   `json:"amount"`
-	ReferenceID *string   `json:"reference_id,omitempty"`
-	Status      string    `json:"status"` // pending | paid | rejected
-	CreatedAt   time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	UserName  string    `json:"user_name"`
+	Role      string    `json:"role"`
+	Amount    float64   `json:"amount"`
+	Status    string    `json:"status"` // pending | paid | rejected
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (r *AdminRepository) ListWithdrawals(ctx context.Context) ([]AdminWithdrawalRow, error) {
-	query := `SELECT l.id, l.user_id, u.full_name, u.role::text, l.amount, l.reference_id, l.created_at
-		FROM ledger_entries l
-		JOIN users u ON u.id = l.user_id
-		WHERE l.entry_type = 'debit' AND l.description = 'Withdrawal to bank account'
-		ORDER BY l.created_at DESC LIMIT 200`
+	query := `SELECT w.id, w.user_id, u.full_name, u.role::text, w.amount, w.status::text, w.created_at
+		FROM withdrawal_requests w
+		JOIN users u ON u.id = w.user_id
+		ORDER BY w.created_at DESC LIMIT 200`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, err
@@ -305,58 +302,62 @@ func (r *AdminRepository) ListWithdrawals(ctx context.Context) ([]AdminWithdrawa
 	var out []AdminWithdrawalRow
 	for rows.Next() {
 		var row AdminWithdrawalRow
-		if err := rows.Scan(&row.ID, &row.UserID, &row.UserName, &row.Role, &row.Amount, &row.ReferenceID, &row.CreatedAt); err != nil {
+		if err := rows.Scan(&row.ID, &row.UserID, &row.UserName, &row.Role, &row.Amount, &row.Status, &row.CreatedAt); err != nil {
 			return nil, err
-		}
-		switch {
-		case row.ReferenceID != nil && len(*row.ReferenceID) >= 15 && (*row.ReferenceID)[:15] == "MANUAL-PENDING-":
-			row.Status = "pending"
-		case row.ReferenceID != nil && len(*row.ReferenceID) >= 8 && (*row.ReferenceID)[:8] == "REJECTED":
-			row.Status = "rejected"
-		default:
-			row.Status = "paid"
 		}
 		out = append(out, row)
 	}
 	return out, nil
 }
 
-// MarkWithdrawalPaid — admin confirms the bank/UPI transfer went through outside the app.
-// Purely updates the audit reference on the existing ledger row; the balance math (already
-// debited at request time, per WalletService.Withdraw) is untouched.
-func (r *AdminRepository) MarkWithdrawalPaid(ctx context.Context, entryID, adminID string) error {
-	ref := fmt.Sprintf("PAID-BY-%s-%d", adminID, time.Now().Unix())
-	_, err := r.db.Exec(ctx, `UPDATE ledger_entries SET reference_id = $1 WHERE id = $2 AND entry_type = 'debit' AND description = 'Withdrawal to bank account'`, ref, entryID)
-	return err
-}
-
-// RejectWithdrawal — reverses the debit by appending a new credit entry for the same amount
-// (the ledger is append-only, same pattern every other credit in this app uses — e.g.
-// dispute refunds), then marks the original debit's reference so it stops showing as pending.
-// This never mutates wallet balance logic itself, only appends an entry through the existing
-// ledger mechanism.
-func (r *AdminRepository) RejectWithdrawal(ctx context.Context, entryID, adminID, reason string) error {
-	var userID string
-	var amount float64
-	if err := r.db.QueryRow(ctx, `SELECT user_id, amount FROM ledger_entries WHERE id = $1 AND entry_type = 'debit' AND description = 'Withdrawal to bank account'`, entryID).Scan(&userID, &amount); err != nil {
-		return err
-	}
-
+// MarkWithdrawalPaid — admin approves the request. This is the moment the actual ledger debit
+// is created (funds only leave the user's available balance now, not at request time) — then
+// the request is marked paid and linked to that ledger entry.
+func (r *AdminRepository) MarkWithdrawalPaid(ctx context.Context, requestID, adminID string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	ref := fmt.Sprintf("REJECTED-BY-%s-%d", adminID, time.Now().Unix())
-	if _, err := tx.Exec(ctx, `UPDATE ledger_entries SET reference_id = $1 WHERE id = $2`, ref, entryID); err != nil {
-		return err
+	var userID string
+	var amount float64
+	err = tx.QueryRow(ctx, `SELECT user_id, amount FROM withdrawal_requests WHERE id = $1 AND status = 'pending'`, requestID).Scan(&userID, &amount)
+	if err != nil {
+		return fmt.Errorf("withdrawal request not found or already processed: %w", err)
 	}
-	desc := fmt.Sprintf("Withdrawal Rejected — Refunded (%s)", reason)
-	if _, err := tx.Exec(ctx, `INSERT INTO ledger_entries (user_id, entry_type, amount, description, reference_id) VALUES ($1, 'credit', $2, $3, $4)`, userID, amount, desc, ref); err != nil {
+
+	var ledgerEntryID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO ledger_entries (user_id, entry_type, amount, description, reference_id)
+		VALUES ($1, 'debit', $2, 'Withdrawal to bank account', $3) RETURNING id`,
+		userID, amount, requestID).Scan(&ledgerEntryID)
+	if err != nil {
+		return fmt.Errorf("recording withdrawal debit: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE withdrawal_requests SET status = 'paid', ledger_entry_id = $1, processed_by = $2, processed_at = now()
+		WHERE id = $3`, ledgerEntryID, adminID, requestID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// RejectWithdrawal — since nothing was ever debited at request time, rejecting just marks the
+// request rejected. No reversing ledger entry is needed (there was never a forward one).
+func (r *AdminRepository) RejectWithdrawal(ctx context.Context, requestID, adminID, reason string) error {
+	cmd, err := r.db.Exec(ctx, `
+		UPDATE withdrawal_requests
+		SET status = 'rejected', processed_by = $1, processed_at = now(), rejection_reason = $2
+		WHERE id = $3 AND status = 'pending'`, adminID, reason, requestID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("withdrawal request not found or already processed")
+	}
+	return nil
 }
 
 func (r *AdminRepository) GetAnalytics(ctx context.Context) (*models.Analytics, error) {

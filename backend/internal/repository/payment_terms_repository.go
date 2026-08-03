@@ -247,7 +247,7 @@ type AdminPaymentFilters struct {
 }
 
 func (r *PaymentTermsRepository) AdminList(ctx context.Context, f AdminPaymentFilters) ([]AdminPaymentRow, error) {
-	query := `SELECT pt.` + paymentTermsColsAliased() + `,
+	query := `SELECT ` + paymentTermsColsAliased() + `,
 		o.order_number, imp.company_name, exp.company_name, o.product_name,
 		(SELECT COUNT(*) FROM payment_milestones WHERE payment_term_id = pt.id),
 		(SELECT COUNT(*) FROM payment_milestones WHERE payment_term_id = pt.id AND status = 'released')
@@ -288,8 +288,14 @@ func (r *PaymentTermsRepository) AdminList(ctx context.Context, f AdminPaymentFi
 	return out, rows.Err()
 }
 
+// BUG FIX (C10): previously only the FIRST column got the "pt." prefix (the caller prepended it
+// via string concat: `SELECT pt.` + this string), so the rest — order_id, status, created_by,
+// created_at, updated_at, etc. — were unqualified. AdminList joins orders and users (twice, as
+// imp/exp), both of which also have created_at/updated_at columns, so those unqualified refs
+// raised "column reference is ambiguous" and broke the admin Payment Terms screen entirely. Every
+// column is now explicitly qualified with pt. here instead.
 func paymentTermsColsAliased() string {
-	return "id, order_id, payment_model, currency, total_amount, lc_number, lc_bank_name, lc_expiry_date, lc_status, open_account_days, status, created_by, created_at, updated_at"
+	return "pt.id, pt.order_id, pt.payment_model, pt.currency, pt.total_amount, pt.lc_number, pt.lc_bank_name, pt.lc_expiry_date, pt.lc_status, pt.open_account_days, pt.status, pt.created_by, pt.created_at, pt.updated_at"
 }
 
 type AdminPaymentSummary struct {

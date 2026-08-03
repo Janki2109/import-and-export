@@ -65,8 +65,18 @@ class ChatSocket {
   WebSocketChannel? _channel;
   final _storage = const FlutterSecureStorage();
   final _incoming = StreamController<ChatMessage>.broadcast();
+  // Journey 8 — typing indicator / online status: (conversationId, userId) for typing,
+  // (userId, online) for presence. Kept as raw maps rather than new model classes since
+  // these are ephemeral UI signals, not persisted domain data.
+  final _typing = StreamController<Map<String, String>>.broadcast();
+  final _presence = StreamController<Map<String, dynamic>>.broadcast();
+  final _readReceipts = StreamController<String>.broadcast();
 
   Stream<ChatMessage> get messages => _incoming.stream;
+  Stream<Map<String, String>> get typingEvents => _typing.stream;
+  Stream<Map<String, dynamic>> get presenceEvents => _presence.stream;
+  /// Emits the conversation_id whose messages the other participant just read.
+  Stream<String> get readReceipts => _readReceipts.stream;
   bool get isConnected => _channel != null;
 
   Future<void> connect() async {
@@ -78,8 +88,25 @@ class ChatSocket {
       (raw) {
         try {
           final decoded = jsonDecode(raw as String) as Map<String, dynamic>;
-          if (decoded['type'] == 'message' && decoded['data'] != null) {
-            _incoming.add(ChatMessage.fromJson(decoded['data']));
+          switch (decoded['type']) {
+            case 'message':
+              if (decoded['data'] != null) _incoming.add(ChatMessage.fromJson(decoded['data']));
+              break;
+            case 'typing':
+              _typing.add({
+                'conversation_id': decoded['conversation_id'] as String? ?? '',
+                'user_id': decoded['user_id'] as String? ?? '',
+              });
+              break;
+            case 'presence':
+              _presence.add({
+                'user_id': decoded['user_id'] as String? ?? '',
+                'online': decoded['online'] as bool? ?? false,
+              });
+              break;
+            case 'read':
+              _readReceipts.add(decoded['conversation_id'] as String? ?? '');
+              break;
           }
         } catch (_) {
           // ignore malformed frames
@@ -107,8 +134,17 @@ class ChatSocket {
     }));
   }
 
+  /// Journey 8 — typing indicator: a lightweight, non-persisted WS event. The backend
+  /// forwards it to the other participant only; nothing is stored.
+  void sendTyping(String conversationId) {
+    _channel?.sink.add(jsonEncode({'conversation_id': conversationId, 'type': 'typing'}));
+  }
+
   void dispose() {
     _channel?.sink.close();
     _incoming.close();
+    _typing.close();
+    _presence.close();
+    _readReceipts.close();
   }
 }

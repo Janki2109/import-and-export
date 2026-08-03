@@ -51,6 +51,20 @@ class ChatMessage {
     required this.createdAt,
   });
 
+  /// Journey 8 — read receipts: used to flip isRead locally when a "read" WS event arrives,
+  /// without needing to re-fetch the whole message list.
+  ChatMessage copyWithRead(bool isRead) => ChatMessage(
+        id: id,
+        conversationId: conversationId,
+        senderId: senderId,
+        type: type,
+        content: content,
+        fileUrl: fileUrl,
+        quotationId: quotationId,
+        isRead: isRead,
+        createdAt: createdAt,
+      );
+
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         id: json['id'],
         conversationId: json['conversation_id'],

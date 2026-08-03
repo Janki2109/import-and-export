@@ -84,6 +84,12 @@ func (s *QuotationService) Accept(ctx context.Context, quotationID, importerID s
 	if q.Status != models.QuotationPending {
 		return nil, fmt.Errorf("quotation is not pending (status: %s)", q.Status)
 	}
+	// BUG FIX (Journey 4): validity_date was stored and displayed but never enforced — an
+	// expired quotation (still 'pending', since nothing transitions it on expiry) could be
+	// accepted with no rejection at all.
+	if time.Now().After(q.ValidityDate) {
+		return nil, fmt.Errorf("quotation expired on %s and can no longer be accepted", q.ValidityDate.Format("2006-01-02"))
+	}
 
 	rfq, err := s.rfqRepo.GetByID(ctx, q.RFQID)
 	if err != nil {

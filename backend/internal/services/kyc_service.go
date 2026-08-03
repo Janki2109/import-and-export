@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/razorpay"
 )
 
 type KYCService struct {
@@ -13,35 +15,42 @@ type KYCService struct {
 	userRepo     *repository.UserRepository
 	auditRepo    *repository.AuditLogRepository
 	notification *NotificationService
+	razorpay     *razorpay.Client
 }
 
-func NewKYCService(kycRepo *repository.KYCRepository, userRepo *repository.UserRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService) *KYCService {
-	return &KYCService{kycRepo: kycRepo, userRepo: userRepo, auditRepo: auditRepo, notification: notification}
+func NewKYCService(kycRepo *repository.KYCRepository, userRepo *repository.UserRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService, razorpayClient *razorpay.Client) *KYCService {
+	return &KYCService{kycRepo: kycRepo, userRepo: userRepo, auditRepo: auditRepo, notification: notification, razorpay: razorpayClient}
 }
 
 type SubmitKYCInput struct {
-	UserID          string
-	PANNumber       *string
-	GSTNumber       *string
-	IECCode         *string
-	BusinessLicense *string
-	PANDocURL       *string
-	GSTDocURL       *string
-	IECDocURL       *string
-	AddressDocURL   *string
+	UserID                string
+	PANNumber             *string
+	GSTNumber             *string
+	IECCode               *string
+	BusinessLicense       *string
+	PANDocURL             *string
+	GSTDocURL             *string
+	IECDocURL             *string
+	AddressDocURL         *string
+	BankAccountHolderName *string
+	BankAccountNumber     *string
+	BankIFSC              *string
 }
 
 func (s *KYCService) Submit(ctx context.Context, in SubmitKYCInput) (*models.KYCDetails, error) {
 	k := &models.KYCDetails{
-		UserID:          in.UserID,
-		PANNumber:       in.PANNumber,
-		GSTNumber:       in.GSTNumber,
-		IECCode:         in.IECCode,
-		BusinessLicense: in.BusinessLicense,
-		PANDocURL:       in.PANDocURL,
-		GSTDocURL:       in.GSTDocURL,
-		IECDocURL:       in.IECDocURL,
-		AddressDocURL:   in.AddressDocURL,
+		UserID:                in.UserID,
+		PANNumber:             in.PANNumber,
+		GSTNumber:             in.GSTNumber,
+		IECCode:               in.IECCode,
+		BusinessLicense:       in.BusinessLicense,
+		PANDocURL:             in.PANDocURL,
+		GSTDocURL:             in.GSTDocURL,
+		IECDocURL:             in.IECDocURL,
+		AddressDocURL:         in.AddressDocURL,
+		BankAccountHolderName: in.BankAccountHolderName,
+		BankAccountNumber:     in.BankAccountNumber,
+		BankIFSC:              in.BankIFSC,
 	}
 	if err := s.kycRepo.Upsert(ctx, k); err != nil {
 		return nil, fmt.Errorf("submitting kyc: %w", err)
@@ -57,7 +66,9 @@ func (s *KYCService) ListPending(ctx context.Context, limit, offset int) ([]mode
 	return s.kycRepo.ListPending(ctx, limit, offset)
 }
 
-// Approve — admin action.
+// Approve — admin action. Also creates the Razorpay Contact + Fund Account for payouts, if
+// Razorpay is configured and the user submitted bank details — this is what wallet withdrawal
+// (WalletService.Withdraw) later pays out to.
 func (s *KYCService) Approve(ctx context.Context, userID, adminID string) error {
 	if err := s.kycRepo.UpdateStatus(ctx, userID, "verified", adminID, nil); err != nil {
 		return fmt.Errorf("approving kyc: %w", err)
@@ -69,6 +80,34 @@ func (s *KYCService) Approve(ctx context.Context, userID, adminID string) error 
 	}
 	if user == nil {
 		return fmt.Errorf("user not found")
+	}
+
+	kyc, err := s.kycRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("loading kyc for razorpay linkage: %w", err)
+	}
+	if s.razorpay != nil && s.razorpay.Configured() && kyc != nil &&
+		kyc.BankAccountHolderName != nil && kyc.BankAccountNumber != nil && kyc.BankIFSC != nil {
+		contact, err := s.razorpay.CreateContact(ctx, razorpay.CreateContactRequest{
+			Name:    user.FullName,
+			Email:   user.Email,
+			Contact: user.Phone,
+			Type:    "vendor",
+		})
+		if err != nil {
+			// Non-fatal: KYC approval itself must not fail because of a downstream payout-linkage
+			// issue. The admin can retry linkage (or the user can be paid manually) — surfaced via
+			// the audit log rather than blocking the approval transaction.
+			log.Printf("razorpay contact creation failed for user %s: %v", userID, err)
+		} else {
+			fundAccount, err := s.razorpay.CreateBankFundAccount(ctx, contact.ID,
+				*kyc.BankAccountHolderName, *kyc.BankAccountNumber, *kyc.BankIFSC)
+			if err != nil {
+				log.Printf("razorpay fund account creation failed for user %s: %v", userID, err)
+			} else if err := s.userRepo.SetRazorpayLinkage(ctx, userID, contact.ID, fundAccount.ID); err != nil {
+				log.Printf("storing razorpay linkage failed for user %s: %v", userID, err)
+			}
+		}
 	}
 
 	_ = s.auditRepo.Record(ctx, adminID, "kyc.approve", "kyc_details", userID, nil)

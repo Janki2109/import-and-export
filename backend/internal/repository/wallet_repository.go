@@ -27,14 +27,29 @@ func (r *WalletRepository) Balance(ctx context.Context, userID string) (float64,
 	return balance, nil
 }
 
-// RecordWithdrawal — debits the wallet after a successful Razorpay payout to the user's
-// linked bank/UPI fund account.
-func (r *WalletRepository) RecordWithdrawal(ctx context.Context, userID string, amount float64, razorpayPayoutID string) error {
-	_, err := r.db.Exec(ctx, `
-		INSERT INTO ledger_entries (user_id, entry_type, amount, description, reference_id)
-		VALUES ($1, 'debit', $2, 'Withdrawal to bank account', $3)`,
-		userID, amount, razorpayPayoutID)
-	return err
+// PendingWithdrawalsTotal — sum of this user's not-yet-processed withdrawal requests. Since
+// the ledger isn't debited until admin approval (CreateWithdrawalRequest), this has to be
+// subtracted from the raw ledger balance to get what's actually still available to withdraw —
+// otherwise a user could submit several withdrawal requests exceeding their real balance
+// before any of them are approved.
+func (r *WalletRepository) PendingWithdrawalsTotal(ctx context.Context, userID string) (float64, error) {
+	var total float64
+	err := r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM withdrawal_requests WHERE user_id = $1 AND status = 'pending'`, userID).Scan(&total)
+	return total, err
+}
+
+// CreateWithdrawalRequest — records the request only; no ledger effect until an admin approves
+// it (see AdminRepository.MarkWithdrawalPaid), which is what makes it genuinely "pending".
+func (r *WalletRepository) CreateWithdrawalRequest(ctx context.Context, userID string, amount float64) (*models.WithdrawalRequest, error) {
+	wr := &models.WithdrawalRequest{UserID: userID, Amount: amount, Status: "pending"}
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO withdrawal_requests (user_id, amount) VALUES ($1, $2)
+		RETURNING id, status, created_at`,
+		userID, amount).Scan(&wr.ID, &wr.Status, &wr.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return wr, nil
 }
 
 func (r *WalletRepository) Transactions(ctx context.Context, userID string, limit, offset int) ([]models.LedgerEntry, error) {

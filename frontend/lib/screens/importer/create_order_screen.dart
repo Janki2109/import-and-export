@@ -1,18 +1,27 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
+import '../../models/company.dart';
 import '../../services/order_service.dart';
+import 'browse_exporters_screen.dart';
 
 /// Importer fills product + exporter details -> backend creates order + a upi://pay link ->
 /// this screen pops back with the result so the dashboard can launch the UPI payment sheet.
+///
+/// BUG FIX (Journey 3): exporterId/exporterName previously had to be typed/pasted in as a raw
+/// user ID the importer had to obtain out-of-band. Now optionally pre-filled when reached from
+/// a company profile (CompanyProfileScreen), or picked from the supplier directory here.
 class CreateOrderScreen extends StatefulWidget {
-  const CreateOrderScreen({super.key});
+  final String? exporterId;
+  final String? exporterName;
+  const CreateOrderScreen({super.key, this.exporterId, this.exporterName});
   @override
   State<CreateOrderScreen> createState() => _CreateOrderScreenState();
 }
 
 class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _exporterIdCtrl = TextEditingController();
+  String? _exporterId;
+  String? _exporterName;
   final _productCtrl = TextEditingController();
   final _hsnCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController();
@@ -22,12 +31,37 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _orderService = OrderService();
   bool _loading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _exporterId = widget.exporterId;
+    _exporterName = widget.exporterName;
+  }
+
+  Future<void> _pickExporter() async {
+    final picked = await Navigator.of(context).push<DirectoryListing>(
+      MaterialPageRoute(builder: (_) => const BrowseExportersScreen(picking: true)),
+    );
+    if (picked != null) {
+      setState(() {
+        _exporterId = picked.userId;
+        _exporterName = picked.companyName;
+      });
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_exporterId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a supplier first.'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
     setState(() => _loading = true);
     try {
       final result = await _orderService.createOrder(
-        exporterId: _exporterIdCtrl.text.trim(),
+        exporterId: _exporterId!,
         productName: _productCtrl.text.trim(),
         hsnCode: _hsnCtrl.text.trim().isEmpty ? null : _hsnCtrl.text.trim(),
         quantity: double.parse(_qtyCtrl.text),
@@ -61,10 +95,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextFormField(
-                  controller: _exporterIdCtrl,
-                  decoration: const InputDecoration(labelText: "Exporter's User ID", helperText: 'Get this from the exporter you are dealing with'),
-                  validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                InkWell(
+                  onTap: _pickExporter,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Supplier',
+                      suffixIcon: Icon(Icons.search),
+                    ),
+                    child: Text(
+                      _exporterName ?? 'Tap to choose a supplier',
+                      style: TextStyle(color: _exporterName == null ? AppColors.textSecondary : null),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 14),
                 TextFormField(

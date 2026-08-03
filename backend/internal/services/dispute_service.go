@@ -83,11 +83,15 @@ func (s *DisputeService) Resolve(ctx context.Context, disputeID, adminID, resolu
 
 	switch resolution {
 	case "refund":
-		if err := s.escrowRepo.MarkRefunded(ctx, dispute.OrderID); err != nil {
+		order, err := s.orderRepo.GetByID(ctx, dispute.OrderID)
+		if err != nil {
+			return fmt.Errorf("look up order for refund: %w", err)
+		}
+		if err := s.escrowRepo.MarkRefunded(ctx, dispute.OrderID, order.ImporterID); err != nil {
 			return fmt.Errorf("refund importer: %w", err)
 		}
 	case "release":
-		if err := s.orderSvc.ConfirmDeliveryAndRelease(ctx, dispute.OrderID, adminID); err != nil {
+		if err := s.orderSvc.ConfirmDeliveryAndRelease(ctx, dispute.OrderID, adminID, false); err != nil {
 			return fmt.Errorf("release to exporter: %w", err)
 		}
 	default:

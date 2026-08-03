@@ -17,14 +17,17 @@ func NewKYCHandler(kycService *services.KYCService) *KYCHandler {
 }
 
 type submitKYCRequest struct {
-	PANNumber       *string `json:"pan_number"`
-	GSTNumber       *string `json:"gst_number"`
-	IECCode         *string `json:"iec_code"`
-	BusinessLicense *string `json:"business_license"`
-	PANDocURL       *string `json:"pan_doc_url"`
-	GSTDocURL       *string `json:"gst_doc_url"`
-	IECDocURL       *string `json:"iec_doc_url"`
-	AddressDocURL   *string `json:"address_doc_url"`
+	PANNumber             *string `json:"pan_number"`
+	GSTNumber             *string `json:"gst_number"`
+	IECCode               *string `json:"iec_code"`
+	BusinessLicense       *string `json:"business_license"`
+	PANDocURL             *string `json:"pan_doc_url"`
+	GSTDocURL             *string `json:"gst_doc_url"`
+	IECDocURL             *string `json:"iec_doc_url"`
+	AddressDocURL         *string `json:"address_doc_url"`
+	BankAccountHolderName *string `json:"bank_account_holder_name"`
+	BankAccountNumber     *string `json:"bank_account_number"`
+	BankIFSC              *string `json:"bank_ifsc"`
 }
 
 // Submit — expects doc URLs already uploaded to S3 by the client (Flutter uploads directly
@@ -41,6 +44,7 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 		UserID: userID, PANNumber: req.PANNumber, GSTNumber: req.GSTNumber, IECCode: req.IECCode,
 		BusinessLicense: req.BusinessLicense, PANDocURL: req.PANDocURL, GSTDocURL: req.GSTDocURL,
 		IECDocURL: req.IECDocURL, AddressDocURL: req.AddressDocURL,
+		BankAccountHolderName: req.BankAccountHolderName, BankAccountNumber: req.BankAccountNumber, BankIFSC: req.BankIFSC,
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())

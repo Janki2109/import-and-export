@@ -128,6 +128,19 @@ func (r *OrderRepository) ListByUser(ctx context.Context, userID string, role mo
 	return orders, nil
 }
 
+// HasOrderBetween — Journey 8: whether these two users share at least one order together
+// (either as importer/exporter). Used to gate chat to actual trade partners instead of any
+// importer being able to message any exporter platform-wide with no relationship.
+func (r *OrderRepository) HasOrderBetween(ctx context.Context, userA, userB string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM orders
+			WHERE (importer_id = $1 AND exporter_id = $2) OR (importer_id = $2 AND exporter_id = $1)
+		)`, userA, userB).Scan(&exists)
+	return exists, err
+}
+
 func (r *OrderRepository) UpdateStatus(ctx context.Context, orderID string, status models.OrderStatus) error {
 	_, err := r.db.Exec(ctx, `UPDATE orders SET status = $1 WHERE id = $2`, status, orderID)
 	return err

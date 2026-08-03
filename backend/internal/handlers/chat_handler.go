@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -160,10 +161,29 @@ func (h *ChatHandler) Connect(c *gin.Context) {
 	h.hub.Register(userID, conn)
 	defer h.hub.Unregister(userID, conn)
 
+	// Journey 8 — "online status": broadcast this user's presence to everyone they have a
+	// conversation with, on both connect and disconnect. Best-effort — a lookup failure just
+	// means presence doesn't update for this event, not a connection failure.
+	h.broadcastPresence(c.Request.Context(), userID, true)
+	defer h.broadcastPresence(context.Background(), userID, false)
+
 	for {
 		var in incomingWSMessage
 		if err := conn.ReadJSON(&in); err != nil {
 			break // client disconnected or sent garbage — close the connection
+		}
+
+		// Journey 8 — "typing indicator": a lightweight, non-persisted event forwarded to the
+		// other participant only. Not stored anywhere, unlike real messages.
+		if in.Type == "typing" {
+			if conv, err := h.chatService.GetConversationForParticipant(c.Request.Context(), in.ConversationID, userID); err == nil {
+				recipientID := conv.ParticipantOneID
+				if recipientID == userID {
+					recipientID = conv.ParticipantTwoID
+				}
+				h.hub.SendToUser(recipientID, gin.H{"type": "typing", "conversation_id": in.ConversationID, "user_id": userID})
+			}
+			continue
 		}
 
 		msg, err := h.chatService.SendMessage(c.Request.Context(), services.SendMessageInput{
@@ -180,5 +200,15 @@ func (h *ChatHandler) Connect(c *gin.Context) {
 		}
 		// Echo back to sender too so their own UI updates without a separate REST round-trip.
 		_ = conn.WriteJSON(gin.H{"type": "message", "data": msg})
+	}
+}
+
+func (h *ChatHandler) broadcastPresence(ctx context.Context, userID string, online bool) {
+	conversations, err := h.chatService.ListConversations(ctx, userID)
+	if err != nil {
+		return
+	}
+	for _, conv := range conversations {
+		h.hub.SendToUser(conv.OtherUserID, gin.H{"type": "presence", "user_id": userID, "online": online})
 	}
 }

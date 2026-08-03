@@ -23,12 +23,16 @@ const (
 type DocumentType string
 
 const (
-	DocCommercialInvoice   DocumentType = "commercial_invoice"
-	DocPackingList         DocumentType = "packing_list"
-	DocCertificateOfOrigin DocumentType = "certificate_of_origin"
-	DocBillOfLading        DocumentType = "bill_of_lading"
-	DocAirWaybill          DocumentType = "air_waybill"
-	DocShippingInvoice     DocumentType = "shipping_invoice"
+	DocCommercialInvoice     DocumentType = "commercial_invoice"
+	DocPackingList           DocumentType = "packing_list"
+	DocCertificateOfOrigin   DocumentType = "certificate_of_origin"
+	DocBillOfLading          DocumentType = "bill_of_lading"
+	DocAirWaybill            DocumentType = "air_waybill"
+	DocShippingInvoice       DocumentType = "shipping_invoice"
+	DocExportDeclaration     DocumentType = "export_declaration"
+	DocImportDeclaration     DocumentType = "import_declaration"
+	DocInspectionCertificate DocumentType = "inspection_certificate"
+	DocInsuranceCertificate  DocumentType = "insurance_certificate"
 )
 
 type RFQ struct {
@@ -62,11 +66,33 @@ type Quotation struct {
 	UpdatedAt    time.Time       `json:"updated_at" db:"updated_at"`
 }
 
+// Document — the "current version" pointer for one (order_id, type) pair. FileURL is a
+// short-lived signed download URL (Journey 9: "signed sharing"), not a permanent public path —
+// generated fresh by the handler on every read, never stored as such.
 type Document struct {
 	ID          string       `json:"id" db:"id"`
 	OrderID     string       `json:"order_id" db:"order_id"`
 	Type        DocumentType `json:"type" db:"type"`
 	FileURL     string       `json:"file_url" db:"file_url"`
+	StorageKey  string       `json:"-" db:"storage_key"`
+	Version     int          `json:"version" db:"version"`
+	Checksum    string       `json:"checksum" db:"checksum"`
+	Signature   string       `json:"signature" db:"signature"`
 	GeneratedBy string       `json:"generated_by" db:"generated_by"`
 	CreatedAt   time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at" db:"updated_at"`
+}
+
+// DocumentVersion — Journey 9 "version history": one row per past generation of a document,
+// kept even after `documents` is overwritten with the current version.
+type DocumentVersion struct {
+	ID          string    `json:"id" db:"id"`
+	DocumentID  string    `json:"document_id" db:"document_id"`
+	Version     int       `json:"version" db:"version"`
+	StorageKey  string    `json:"-" db:"storage_key"`
+	FileURL     string    `json:"file_url" db:"-"` // populated by the handler, same as Document.FileURL
+	Checksum    string    `json:"checksum" db:"checksum"`
+	Signature   string    `json:"signature" db:"signature"`
+	GeneratedBy string    `json:"generated_by" db:"generated_by"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }

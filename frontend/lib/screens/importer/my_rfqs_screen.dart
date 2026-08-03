@@ -619,6 +619,7 @@ class _RFQQuotationsScreenState extends State<RFQQuotationsScreen> {
             itemCount: quotations.length,
             itemBuilder: (context, i) {
               final q = quotations[i];
+              final isExpired = q.validityDate.isBefore(DateTime.now());
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: Padding(
@@ -635,18 +636,25 @@ class _RFQQuotationsScreenState extends State<RFQQuotationsScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text('Total: ₹${q.totalAmount.toStringAsFixed(2)} · Qty: ${q.quantity}', style: const TextStyle(color: AppColors.textSecondary)),
-                      Text('Valid until: ${q.validityDate.toLocal().toString().split(' ').first}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                      Text(
+                        'Valid until: ${q.validityDate.toLocal().toString().split(' ').first}${isExpired ? ' (expired)' : ''}',
+                        style: TextStyle(color: isExpired ? AppColors.error : AppColors.textSecondary, fontSize: 13, fontWeight: isExpired ? FontWeight.w600 : null),
+                      ),
                       if (q.terms != null && q.terms!.isNotEmpty) ...[
                         const SizedBox(height: 6),
                         Text(q.terms!),
                       ],
                       if (q.status == 'pending') ...[
                         const SizedBox(height: 10),
+                        // BUG FIX (Journey 4): validity_date was shown but never enforced —
+                        // the Accept button stayed clickable past expiry with no server-side
+                        // check either. Disabled here; QuotationService.Accept now also
+                        // rejects it server-side as a second layer of defense.
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
-                            onPressed: _accepting ? null : () => _accept(q),
-                            child: const Text('Accept Quotation'),
+                            onPressed: (_accepting || isExpired) ? null : () => _accept(q),
+                            child: Text(isExpired ? 'Expired' : 'Accept Quotation'),
                           ),
                         ),
                         const SizedBox(height: 8),

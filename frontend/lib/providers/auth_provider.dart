@@ -25,6 +25,11 @@ class AuthProvider extends ChangeNotifier {
   /// bouncing the user prematurely). Populated right after auth resolves.
   bool? companyExists;
   bool? kycSubmitted;
+  // BUG FIX (Journey 2 — KYC gate): the router previously only checked whether a KYC row
+  // existed (kycSubmitted), so a rejected or still-pending user could reach the full dashboard
+  // after submitting once. kycStatus carries the real status ('submitted'/'verified'/'rejected')
+  // so the router can gate on actual approval instead.
+  String? kycStatus;
 
   AuthProvider() {
     // ApiClient calls this if a token refresh fails (refresh token itself expired/revoked),
@@ -48,8 +53,10 @@ class AuthProvider extends ChangeNotifier {
     try {
       final kyc = await _kycService.getMyStatus();
       kycSubmitted = kyc['id'] != null;
+      kycStatus = kyc['status'] as String?;
     } catch (_) {
       kycSubmitted = false;
+      kycStatus = null;
     }
     notifyListeners();
   }

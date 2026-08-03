@@ -16,7 +16,10 @@ import '../../services/upload_service.dart';
 class ChatScreen extends ConsumerStatefulWidget {
   final String conversationId;
   final String otherUserName;
-  const ChatScreen({super.key, required this.conversationId, required this.otherUserName});
+  // Journey 8 — online status: optional so existing call sites that don't have this handy
+  // keep working unchanged; the presence dot just doesn't show without it.
+  final String? otherUserId;
+  const ChatScreen({super.key, required this.conversationId, required this.otherUserName, this.otherUserId});
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
@@ -33,11 +36,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _loading = true;
   bool _recording = false;
   bool _uploadingVoice = false;
+  // Journey 8 — typing indicator / online status / read receipts.
+  bool _otherTyping = false;
+  bool _otherOnline = false;
+  DateTime? _lastTypingSent;
 
   @override
   void initState() {
     super.initState();
     _init();
+    _inputCtrl.addListener(_onInputChanged);
+  }
+
+  void _onInputChanged() {
+    // Throttle to at most one typing event per 2s — no need to spam the socket per keystroke.
+    final now = DateTime.now();
+    if (_lastTypingSent == null || now.difference(_lastTypingSent!) > const Duration(seconds: 2)) {
+      _lastTypingSent = now;
+      _socket.sendTyping(widget.conversationId);
+    }
   }
 
   Future<void> _init() async {
@@ -55,6 +72,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (msg.conversationId == widget.conversationId && mounted) {
         setState(() => _messages.add(msg));
         _scrollToBottom();
+        // A new incoming message while this screen is open counts as read immediately.
+        if (msg.senderId != ref.read(authProvider).currentUser?.id) {
+          _chatService.markRead(widget.conversationId);
+        }
+      }
+    });
+    _socket.typingEvents.listen((event) {
+      if (event['conversation_id'] == widget.conversationId && mounted) {
+        setState(() => _otherTyping = true);
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _otherTyping = false);
+        });
+      }
+    });
+    if (widget.otherUserId != null) {
+      _socket.presenceEvents.listen((event) {
+        if (event['user_id'] == widget.otherUserId && mounted) {
+          setState(() => _otherOnline = event['online'] as bool? ?? false);
+        }
+      });
+    }
+    _socket.readReceipts.listen((conversationId) {
+      if (conversationId == widget.conversationId && mounted) {
+        final myId = ref.read(authProvider).currentUser?.id;
+        setState(() {
+          for (var i = 0; i < _messages.length; i++) {
+            if (_messages[i].senderId == myId && !_messages[i].isRead) {
+              _messages[i] = _messages[i].copyWithRead(true);
+            }
+          }
+        });
       }
     });
   }
@@ -189,6 +237,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   void dispose() {
+    _inputCtrl.removeListener(_onInputChanged);
     _socket.dispose();
     _recorder.dispose();
     super.dispose();
@@ -200,7 +249,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final myRole = ref.read(authProvider).currentUser?.role;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.otherUserName)),
+      appBar: AppBar(
+        title: Text(widget.otherUserName),
+        bottom: widget.otherUserId == null
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(20),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.circle, size: 8, color: _otherOnline ? AppColors.success : AppColors.textSecondary),
+                      const SizedBox(width: 6),
+                      Text(_otherOnline ? 'Online' : 'Offline', style: const TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+      ),
       body: Column(
         children: [
           Expanded(
@@ -219,6 +286,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         },
                       ),
           ),
+          if (_otherTyping)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Typing…', style: TextStyle(color: AppColors.textSecondary, fontStyle: FontStyle.italic, fontSize: 12)),
+              ),
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -313,7 +388,19 @@ class _MessageBubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: isMine ? null : Border.all(color: Colors.grey.shade200),
         ),
-        child: content,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            content,
+            // Journey 8 — read receipts: only shown on my own sent messages, mirroring the
+            // familiar single/double-tick convention.
+            if (isMine) ...[
+              const SizedBox(height: 2),
+              Icon(message.isRead ? Icons.done_all : Icons.done, size: 14, color: fg.withValues(alpha: 0.7)),
+            ],
+          ],
+        ),
       ),
     );
   }

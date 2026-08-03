@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
@@ -13,11 +12,12 @@ type WalletService struct {
 	repo         *repository.WalletRepository
 	userRepo     *repository.UserRepository
 	escrowRepo   *repository.EscrowRepository
+	kycRepo      *repository.KYCRepository
 	notification *NotificationService
 }
 
-func NewWalletService(repo *repository.WalletRepository, userRepo *repository.UserRepository, escrowRepo *repository.EscrowRepository, notification *NotificationService) *WalletService {
-	return &WalletService{repo: repo, userRepo: userRepo, escrowRepo: escrowRepo, notification: notification}
+func NewWalletService(repo *repository.WalletRepository, userRepo *repository.UserRepository, escrowRepo *repository.EscrowRepository, kycRepo *repository.KYCRepository, notification *NotificationService) *WalletService {
+	return &WalletService{repo: repo, userRepo: userRepo, escrowRepo: escrowRepo, kycRepo: kycRepo, notification: notification}
 }
 
 type WalletSummary struct {
@@ -50,23 +50,40 @@ func (s *WalletService) GetSummary(ctx context.Context, userID string) (*WalletS
 	}, nil
 }
 
-// Withdraw — records the withdrawal request against the ledger immediately (so the balance
-// reflects it right away); the actual bank/UPI transfer to the user is processed manually
-// by platform ops outside the app (no payment gateway wired for payouts). Escrow rule: this
-// only ever debits the user's own ledger balance (already-released funds) — it can never
-// touch money still held in escrow, since that was never credited to their ledger in the
+// Withdraw — Journey 5: "withdrawal should stay pending until approved." Records a
+// withdrawal_requests row only — no ledger effect, so the balance does NOT drop yet. The
+// actual debit ledger entry is only created when an admin approves it
+// (AdminRepository.MarkWithdrawalPaid). Escrow rule unchanged: available balance is the
+// user's own ledger balance (already-released funds) minus already-pending requests — it can
+// never touch money still held in escrow, since that was never credited to their ledger in the
 // first place (see EscrowRepository.MarkReleased).
 func (s *WalletService) Withdraw(ctx context.Context, userID string, amount float64) error {
 	if amount <= 0 {
 		return fmt.Errorf("withdrawal amount must be positive")
 	}
 
+	// BUG FIX (Journey 2 — KYC gate): wallet withdrawal previously had no KYC check at all, so
+	// funds could be withdrawn from an unverified account. Wallet activation (withdrawal
+	// specifically — balance/history stay viewable) requires an approved KYC.
+	kyc, err := s.kycRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("checking KYC status: %w", err)
+	}
+	if kyc == nil || kyc.Status != models.KYCVerified {
+		return fmt.Errorf("KYC approval required before withdrawing funds")
+	}
+
 	balance, err := s.repo.Balance(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if amount > balance {
-		return fmt.Errorf("insufficient wallet balance (available: %.2f)", balance)
+	pending, err := s.repo.PendingWithdrawalsTotal(ctx, userID)
+	if err != nil {
+		return err
+	}
+	available := balance - pending
+	if amount > available {
+		return fmt.Errorf("insufficient wallet balance (available: %.2f, %.2f already pending approval)", available, pending)
 	}
 
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -74,10 +91,9 @@ func (s *WalletService) Withdraw(ctx context.Context, userID string, amount floa
 		return fmt.Errorf("user not found")
 	}
 
-	ref := fmt.Sprintf("MANUAL-PENDING-%d", time.Now().Unix())
-	if err := s.repo.RecordWithdrawal(ctx, userID, amount, ref); err != nil {
+	if _, err := s.repo.CreateWithdrawalRequest(ctx, userID, amount); err != nil {
 		return err
 	}
-	_ = s.notification.Send(ctx, userID, "Withdrawal Successful", fmt.Sprintf("Your withdrawal of ₹%.2f has been recorded and is being processed to your bank account.", amount), "wallet", nil)
+	_ = s.notification.Send(ctx, userID, "Withdrawal Requested", fmt.Sprintf("Your withdrawal request of ₹%.2f has been submitted and is pending admin approval.", amount), "wallet", nil)
 	return nil
 }

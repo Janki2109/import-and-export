@@ -17,13 +17,15 @@ type OrderService struct {
 	orderRepo    *repository.OrderRepository
 	escrowRepo   *repository.EscrowRepository
 	auditRepo    *repository.AuditLogRepository
+	disputeRepo  *repository.DisputeRepository
+	kycRepo      *repository.KYCRepository
 	cfg          *config.Config
 	notification *NotificationService
 	compliance   *ComplianceService
 }
 
-func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService) *OrderService {
-	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, cfg: cfg, notification: notification, compliance: compliance}
+func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, disputeRepo *repository.DisputeRepository, kycRepo *repository.KYCRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService) *OrderService {
+	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, disputeRepo: disputeRepo, kycRepo: kycRepo, cfg: cfg, notification: notification, compliance: compliance}
 }
 
 func (s *OrderService) notify(ctx context.Context, userID, title, body, notifType string, refID *string) {
@@ -34,6 +36,17 @@ func (s *OrderService) notify(ctx context.Context, userID, title, body, notifTyp
 // order. actorID is "" for system/cron-triggered actions.
 func (s *OrderService) audit(ctx context.Context, actorID, action, orderID string, metadata map[string]interface{}) {
 	_ = s.auditRepo.Record(ctx, actorID, action, "escrow", orderID, metadata)
+}
+
+func (s *OrderService) requireKYCVerified(ctx context.Context, userID string) error {
+	kyc, err := s.kycRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("checking KYC status: %w", err)
+	}
+	if kyc == nil || kyc.Status != models.KYCVerified {
+		return fmt.Errorf("KYC approval required before placing or receiving orders")
+	}
+	return nil
 }
 
 type CreateOrderInput struct {
@@ -53,7 +66,17 @@ type CreateOrderInput struct {
 // (GPay/PhonePe/Paytm/BHIM/...) with the amount and payee pre-filled. There is no gateway
 // callback: the importer pays inside their UPI app, comes back, and taps "Payment Done"
 // (see ConfirmPaymentDone) to self-declare it — no cryptographic proof of payment.
+// BUG FIX (Journey 2 — KYC gate): CreateOrder previously had no KYC check at all, so an
+// unverified importer could place real escrow-backed orders. Both importer and exporter on the
+// order must have an approved (verified) KYC before an order can be created.
 func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*models.Order, *models.EscrowPayment, string, error) {
+	if err := s.requireKYCVerified(ctx, in.ImporterID); err != nil {
+		return nil, nil, "", err
+	}
+	if err := s.requireKYCVerified(ctx, in.ExporterID); err != nil {
+		return nil, nil, "", err
+	}
+
 	total := in.Quantity * in.UnitPrice
 	feePercent := s.cfg.PlatformFeePercent
 	feeAmount := round2(total * feePercent / 100)
@@ -169,10 +192,26 @@ func (s *OrderService) ConfirmPaymentDone(ctx context.Context, orderID, importer
 // the user who triggered this — used only for the audit trail (empty string is fine for
 // system-triggered calls, though the auto-release cron no longer calls this — see
 // cron/auto_release.go, which notifies admin instead of auto-releasing).
-func (s *OrderService) ConfirmDeliveryAndRelease(ctx context.Context, orderID, actorID string) error {
+// requireOwnership is true for the importer-initiated confirm-delivery endpoint (actorID must be
+// the order's own importer, and an open dispute blocks release) and false when called from
+// DisputeService.Resolve, where the admin resolving the dispute IS the authority for release and
+// the dispute row is still 'open' in the DB at this exact point in that flow.
+func (s *OrderService) ConfirmDeliveryAndRelease(ctx context.Context, orderID, actorID string, requireOwnership bool) error {
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
 		return err
+	}
+
+	// BUG FIX (C1/C2): previously any authenticated importer could release escrow on ANY order by
+	// supplying its orderID, not just their own orders — no ownership check existed. Also added a
+	// check blocking self-initiated release while an open dispute exists on the order.
+	if requireOwnership {
+		if actorID != order.ImporterID {
+			return fmt.Errorf("not authorized: this order does not belong to you")
+		}
+		if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
+			return fmt.Errorf("cannot release: this order has an open dispute pending resolution")
+		}
 	}
 
 	escrow, err := s.escrowRepo.GetByOrderID(ctx, orderID)
@@ -215,12 +254,21 @@ func (s *OrderService) HoldPayment(ctx context.Context, orderID, adminID string)
 // RefundPayment — admin directly refunds a held/on-hold escrow payment without requiring
 // a dispute to exist first (DisputeService.Resolve covers the dispute-driven refund path;
 // this is the direct one, e.g. order cancelled before shipment).
+//
+// BUG FIX (Journey 7): previously had no open-dispute check at all, so an admin could refund
+// an order with an open dispute through this direct action, moving money while completely
+// bypassing DisputeService.Resolve — the dispute itself would stay 'open' forever even though
+// the money had already moved. Now requires going through dispute resolution instead, which
+// both moves the money AND closes the dispute in one step.
 func (s *OrderService) RefundPayment(ctx context.Context, orderID, adminID, reason string) error {
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
 		return err
 	}
-	if err := s.escrowRepo.MarkRefunded(ctx, orderID); err != nil {
+	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
+		return fmt.Errorf("cannot refund directly: order has an open dispute — resolve it via the Disputes screen instead")
+	}
+	if err := s.escrowRepo.MarkRefunded(ctx, orderID, order.ImporterID); err != nil {
 		return fmt.Errorf("refund payment: %w", err)
 	}
 	s.audit(ctx, adminID, "escrow.refunded", order.ID, map[string]interface{}{"reason": reason})

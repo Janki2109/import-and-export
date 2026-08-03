@@ -84,9 +84,20 @@ func (r *DisputeRepository) list(ctx context.Context, query string, args ...inte
 	return out, nil
 }
 
+// BUG FIX (Journey 7): previously updated by id alone with no status guard — the service-layer
+// "already resolved?" check (dispute_service.go) is read-then-write, so two concurrent resolve
+// requests could both pass that check before either write landed, both proceeding to move money
+// via their own resolution branch. Constraining the WHERE clause to status='open' closes that
+// TOCTOU window: only the first concurrent request can actually flip the row.
 func (r *DisputeRepository) Resolve(ctx context.Context, id, resolvedBy, status, notes string) error {
-	_, err := r.db.Exec(ctx, `
+	cmd, err := r.db.Exec(ctx, `
 		UPDATE disputes SET status = $1, resolution_notes = $2, resolved_by = $3, resolved_at = now()
-		WHERE id = $4`, status, notes, resolvedBy, id)
-	return err
+		WHERE id = $4 AND status = 'open'`, status, notes, resolvedBy, id)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("dispute is already resolved")
+	}
+	return nil
 }

@@ -26,6 +26,7 @@ import '../shared/order_documents_screen.dart';
 import '../wallet/wallet_screen.dart';
 import '../../widgets/theme_toggle_button.dart';
 import 'browse_catalog_screen.dart';
+import 'browse_exporters_screen.dart';
 import 'create_order_screen.dart';
 import 'create_rfq_screen.dart';
 import 'my_rfqs_screen.dart';
@@ -102,7 +103,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
     final companyDone = company != null;
     final kycStatus = kyc['status'] as String?;
     final kycSubmitted = kyc.isNotEmpty;
-    final kycApproved = kycStatus == 'approved';
+    final kycApproved = kycStatus == 'verified';
     final steps = [companyDone, kycSubmitted, kycApproved];
     final completion = ((steps.where((s) => s).length / steps.length) * 100).round();
 
@@ -416,6 +417,9 @@ class _ProfileMenuButton extends ConsumerWidget {
           case 'catalog':
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseCatalogScreen()));
             break;
+          case 'suppliers':
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseExportersScreen()));
+            break;
           case 'membership':
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MembershipScreen()));
             break;
@@ -434,6 +438,7 @@ class _ProfileMenuButton extends ConsumerWidget {
         const PopupMenuItem(value: 'profile', child: ListTile(leading: Icon(Icons.person_outline), title: Text('Profile'), contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'documents', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Documents / KYC'), contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'catalog', child: ListTile(leading: Icon(Icons.storefront_outlined), title: Text('Browse Catalog'), contentPadding: EdgeInsets.zero)),
+        const PopupMenuItem(value: 'suppliers', child: ListTile(leading: Icon(Icons.business_outlined), title: Text('Find Suppliers'), contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'membership', child: ListTile(leading: Icon(Icons.workspace_premium_outlined), title: Text('Membership'), contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'ads', child: ListTile(leading: Icon(Icons.campaign_outlined), title: Text('Advertisements'), contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'disputes', child: ListTile(leading: Icon(Icons.gavel_outlined), title: Text('My Disputes'), contentPadding: EdgeInsets.zero)),

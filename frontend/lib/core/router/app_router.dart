@@ -87,7 +87,10 @@ GoRouter buildRouter(AuthProvider auth) {
       // authenticated
       final isAdmin = auth.currentUser!.role == UserRole.admin;
       final companyDone = isAdmin || (auth.companyExists ?? false);
-      final kycDone = isAdmin || (auth.kycSubmitted ?? false);
+      // BUG FIX (Journey 2 — KYC gate): previously gated only on a KYC row existing
+      // (auth.kycSubmitted), so a pending or rejected user passed straight through to the
+      // dashboard after submitting once. Now requires actual admin approval ('verified').
+      final kycDone = isAdmin || (auth.kycStatus == 'verified');
 
       if (!companyDone) {
         return loc == '/create-company' ? null : '/create-company';

@@ -1144,9 +1144,7 @@ class _OrderCard extends StatelessWidget {
                     ],
                   ],
                 ),
-              ].expand((w) => [w, const SizedBox(height: 4)]).take(9).toList()
-                ..removeWhere((w) =>
-                    w is SizedBox && w.height == 4 && false), // no-op safeguard
+              ].expand((w) => [w, const SizedBox(height: 4)]).toList()
             ),
           ),
         ),

@@ -290,6 +290,19 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			company.POST("", h.Company.Upsert)
 		}
 
+		// Journey 3 — supplier directory: importers browse/search exporter companies, open a
+		// profile (products+certifications+ratings+response time), and rate a company after an
+		// order completes. Read routes are open to any authenticated role (an exporter viewing
+		// another exporter's profile is harmless); rating is enforced server-side to the order's
+		// own importer regardless of role.
+		companies := protected.Group("/companies")
+		{
+			companies.GET("", h.Company.ListDirectory)
+			companies.GET("/:id", h.Company.GetProfile)
+			companies.GET("/:id/ratings", h.Company.ListRatings)
+			companies.POST("/:id/ratings", h.Company.RateCompany)
+		}
+
 		users := protected.Group("/users")
 		{
 			users.GET("/me", h.Profile.GetProfile)
