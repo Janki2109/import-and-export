@@ -25,6 +25,12 @@ class _AdminReferenceDataScreenState extends State<AdminReferenceDataScreen> wit
     _hsCodesFuture = _searchService.searchHSCodes('');
   }
 
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   void _refreshCountries() => setState(() => _countriesFuture = _searchService.searchCountries(''));
   void _refreshHSCodes() => setState(() => _hsCodesFuture = _searchService.searchHSCodes(''));
 
@@ -119,12 +125,24 @@ class _AdminReferenceDataScreenState extends State<AdminReferenceDataScreen> wit
       ),
     );
     if (confirmed != true || codeCtrl.text.trim().isEmpty) return;
+
+    final bcd = double.tryParse(bcdCtrl.text.trim());
+    final igst = double.tryParse(igstCtrl.text.trim());
+    if (bcd == null || bcd < 0 || bcd > 100 || igst == null || igst < 0 || igst > 100) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('BCD % and IGST % must be numeric values between 0 and 100.'), backgroundColor: AppColors.error),
+        );
+      }
+      return;
+    }
+
     try {
       await _adminService.createHSCode(
         code: codeCtrl.text.trim(), description: descCtrl.text.trim(), chapter: chapterCtrl.text.trim(),
-        bcd: double.tryParse(bcdCtrl.text) ?? 0, igst: double.tryParse(igstCtrl.text) ?? 18,
+        bcd: bcd, igst: igst,
       );
-      _refreshHSCodes();
+      if (mounted) _refreshHSCodes();
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
     }

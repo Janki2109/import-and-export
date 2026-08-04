@@ -55,7 +55,7 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 
 func (h *KYCHandler) GetMyStatus(c *gin.Context) {
 	userID := c.GetString("user_id")
-	kyc, err := h.kycService.GetStatus(c.Request.Context(), userID)
+	kyc, err := h.kycService.GetStatus(c.Request.Context(), userID, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -70,7 +70,7 @@ func (h *KYCHandler) GetMyStatus(c *gin.Context) {
 // ---- Admin ----
 
 func (h *KYCHandler) ListPending(c *gin.Context) {
-	list, err := h.kycService.ListPending(c.Request.Context(), 50, 0)
+	list, err := h.kycService.ListPending(c.Request.Context(), 50, 0, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return

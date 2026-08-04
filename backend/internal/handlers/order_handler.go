@@ -17,12 +17,14 @@ func NewOrderHandler(orderService *services.OrderService) *OrderHandler {
 }
 
 type createOrderRequest struct {
-	ExporterID      string  `json:"exporter_id" binding:"required"`
-	ProductName     string  `json:"product_name" binding:"required"`
-	HSNCode         *string `json:"hsn_code"`
-	Quantity        float64 `json:"quantity" binding:"required,gt=0"`
-	Unit            string  `json:"unit" binding:"required"`
-	UnitPrice       float64 `json:"unit_price" binding:"required,gt=0"`
+	ExporterID  string  `json:"exporter_id" binding:"required"`
+	ProductName string  `json:"product_name" binding:"required"`
+	HSNCode     *string `json:"hsn_code"`
+	Quantity    float64 `json:"quantity" binding:"required,gt=0"`
+	Unit        string  `json:"unit" binding:"required"`
+	UnitPrice   float64 `json:"unit_price" binding:"required,gt=0"`
+	// Currency — Journey 10 "multi currency"; optional, defaults to INR (existing behavior).
+	Currency        *string `json:"currency" binding:"omitempty,len=3"`
 	DeliveryAddress *string `json:"delivery_address"`
 	Notes           *string `json:"notes"`
 }
@@ -38,6 +40,10 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
+	currency := ""
+	if req.Currency != nil {
+		currency = *req.Currency
+	}
 	order, escrow, upiLink, err := h.orderService.CreateOrder(c.Request.Context(), services.CreateOrderInput{
 		ImporterID:      importerID,
 		ExporterID:      req.ExporterID,
@@ -46,6 +52,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		Quantity:        req.Quantity,
 		Unit:            req.Unit,
 		UnitPrice:       req.UnitPrice,
+		Currency:        currency,
 		DeliveryAddress: req.DeliveryAddress,
 		Notes:           req.Notes,
 	})
@@ -103,6 +110,57 @@ func (h *OrderHandler) ConfirmPayment(c *gin.Context) {
 	response.Success(c, http.StatusOK, gin.H{
 		"message": "Payment recorded and held in escrow. Exporter has been notified to ship goods.",
 	})
+}
+
+type confirmBankTransferRequest struct {
+	OrderID   string `json:"order_id" binding:"required"`
+	Reference string `json:"reference" binding:"required"`
+}
+
+// ConfirmBankTransfer — Journey 10 "bank transfer": importer self-declares having wired
+// payment to the platform's bank account, with a reference/UTR for reconciliation.
+func (h *OrderHandler) ConfirmBankTransfer(c *gin.Context) {
+	importerID := c.GetString("user_id")
+
+	var req confirmBankTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.orderService.ConfirmBankTransfer(c.Request.Context(), req.OrderID, importerID, req.Reference); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	response.Success(c, http.StatusOK, gin.H{
+		"message": "Bank transfer recorded and held in escrow, pending verification. Exporter has been notified to ship goods.",
+	})
+}
+
+// GetBankTransferDetails — the platform's bank account for the importer to wire payment to.
+func (h *OrderHandler) GetBankTransferDetails(c *gin.Context) {
+	response.Success(c, http.StatusOK, h.orderService.BankTransferDetails())
+}
+
+type createStripeIntentRequest struct {
+	OrderID string `json:"order_id" binding:"required"`
+}
+
+// CreateStripePaymentIntent — Journey 10 "Stripe": international/card payment alternative.
+func (h *OrderHandler) CreateStripePaymentIntent(c *gin.Context) {
+	importerID := c.GetString("user_id")
+	var req createStripeIntentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	intent, err := h.orderService.CreateStripePaymentIntent(c.Request.Context(), req.OrderID, importerID)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, intent)
 }
 
 type confirmDeliveryRequest struct {

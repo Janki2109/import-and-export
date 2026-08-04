@@ -109,7 +109,7 @@ class _BrowseRFQsScreenState extends State<BrowseRFQsScreen> {
                               final submitted = await Navigator.of(context).push<bool>(
                                 MaterialPageRoute(builder: (_) => SubmitQuotationScreen(rfq: rfqs[i])),
                               );
-                              if (submitted == true) _refresh();
+                              if (submitted == true && mounted) _refresh();
                             },
                           ),
                         ),
@@ -477,14 +477,24 @@ class _SubmitQuotationScreenState extends State<SubmitQuotationScreen> {
                       controller: _priceCtrl,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(labelText: 'Unit Price (₹)'),
-                      validator: (v) => (v == null || double.tryParse(v) == null) ? 'Invalid' : null,
+                      validator: (v) {
+                        final n = v == null ? null : double.tryParse(v);
+                        if (n == null) return 'Invalid';
+                        if (n <= 0) return 'Must be greater than 0';
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 14),
                     TextFormField(
                       controller: _qtyCtrl,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(labelText: 'Quantity (${widget.rfq.unit})'),
-                      validator: (v) => (v == null || double.tryParse(v) == null) ? 'Invalid' : null,
+                      validator: (v) {
+                        final n = v == null ? null : double.tryParse(v);
+                        if (n == null) return 'Invalid';
+                        if (n <= 0) return 'Must be greater than 0';
+                        return null;
+                      },
                     ),
                   ],
                 ),

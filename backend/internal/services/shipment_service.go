@@ -127,11 +127,48 @@ func (s *ShipmentService) UploadPOD(ctx context.Context, pod *models.PODDocument
 	return nil
 }
 
-func (s *ShipmentService) GetByOrderID(ctx context.Context, orderID string) (*models.Shipment, error) {
+// SECURITY FIX (document/data ownership validation): GetByOrderID and GetTrackingTimeline
+// previously had no authorization check at all — any authenticated user could view any order's
+// shipment/tracking details (pickup/delivery addresses, carrier, POD) just by knowing/guessing
+// an order_id or shipment_id. Both now require the requester to be that order's own
+// importer/exporter, its assigned logistics partner, or an admin.
+func (s *ShipmentService) authorizeOrderAccess(ctx context.Context, orderID, requesterID, requesterRole string) error {
+	if requesterRole == "admin" {
+		return nil
+	}
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("order not found")
+	}
+	if requesterID == order.ImporterID || requesterID == order.ExporterID {
+		return nil
+	}
+	if requesterRole == "logistics" {
+		shipment, err := s.shipmentRepo.GetByOrderID(ctx, orderID)
+		if err == nil && shipment != nil && shipment.LogisticsID != nil && *shipment.LogisticsID == requesterID {
+			return nil
+		}
+	}
+	return fmt.Errorf("not authorized to view this order's shipment details")
+}
+
+func (s *ShipmentService) GetByOrderID(ctx context.Context, orderID, requesterID, requesterRole string) (*models.Shipment, error) {
+	if err := s.authorizeOrderAccess(ctx, orderID, requesterID, requesterRole); err != nil {
+		return nil, err
+	}
 	return s.shipmentRepo.GetByOrderID(ctx, orderID)
 }
 
-func (s *ShipmentService) GetTrackingTimeline(ctx context.Context, shipmentID string) ([]models.ShipmentEvent, error) {
+// GetTrackingTimeline — authorization is via the shipment's own order (looked up first) rather
+// than shipmentID directly, since that's what carries importer/exporter/logistics identity.
+func (s *ShipmentService) GetTrackingTimeline(ctx context.Context, shipmentID, requesterID, requesterRole string) ([]models.ShipmentEvent, error) {
+	shipment, err := s.shipmentRepo.GetByID(ctx, shipmentID)
+	if err != nil {
+		return nil, fmt.Errorf("shipment not found")
+	}
+	if err := s.authorizeOrderAccess(ctx, shipment.OrderID, requesterID, requesterRole); err != nil {
+		return nil, err
+	}
 	return s.shipmentRepo.GetEvents(ctx, shipmentID)
 }
 

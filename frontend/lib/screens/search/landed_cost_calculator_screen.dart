@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -65,20 +66,36 @@ class _LandedCostCalculatorScreenState extends State<LandedCostCalculatorScreen>
       c.removeListener(_onLiveInputChanged);
     }
     _hsCodeCtrl.removeListener(_onHsCodeChanged);
+    _hsDebounce?.cancel();
+    _hsCodeCtrl.dispose();
+    _fobCtrl.dispose();
+    _freightCtrl.dispose();
+    _insuranceCtrl.dispose();
+    _otherCtrl.dispose();
+    _packagesCtrl.dispose();
+    _originCtrl.dispose();
+    _destinationCtrl.dispose();
     super.dispose();
   }
 
   void _onLiveInputChanged() => setState(() {});
 
   DateTime? _lastHsLookup;
-  Future<void> _onHsCodeChanged() async {
+  Timer? _hsDebounce;
+  void _onHsCodeChanged() {
+    _hsDebounce?.cancel();
     final code = _hsCodeCtrl.text.trim();
     if (code.isEmpty) {
       setState(() => _productName = null);
       return;
     }
-    // Debounce-ish: only the latest keystroke's lookup applies (existing /search/hs-codes
-    // endpoint, already used elsewhere — no new backend call, purely a display lookup).
+    // Debounce the lookup so it fires once typing pauses instead of per-keystroke (existing
+    // /search/hs-codes endpoint, already used elsewhere — no new backend call, purely a
+    // display lookup).
+    _hsDebounce = Timer(const Duration(milliseconds: 450), () => _lookupHsCode(code));
+  }
+
+  Future<void> _lookupHsCode(String code) async {
     final marker = DateTime.now();
     _lastHsLookup = marker;
     try {

@@ -63,24 +63,31 @@ class AuthProvider extends ChangeNotifier {
 
   /// Called once at app startup — checks secure storage for an existing session.
   Future<void> tryAutoLogin() async {
-    final token = await _storage.read(key: AppConstants.tokenKey);
-    final role = await _storage.read(key: AppConstants.roleKey);
-    final userId = await _storage.read(key: AppConstants.userIdKey);
-    final userName = await _storage.read(key: AppConstants.userNameKey);
+    try {
+      final token = await _storage.read(key: AppConstants.tokenKey);
+      final role = await _storage.read(key: AppConstants.roleKey);
+      final userId = await _storage.read(key: AppConstants.userIdKey);
+      final userName = await _storage.read(key: AppConstants.userNameKey);
 
-    if (token != null && role != null && userId != null) {
-      currentUser = AppUser(
-        id: userId,
-        role: roleFromString(role),
-        fullName: userName ?? '',
-        email: '',
-        phone: '',
-        isActive: true,
-      );
-      status = AuthStatus.authenticated;
-      PushNotificationService().init();
-      await refreshOnboardingStatus();
-    } else {
+      if (token != null && role != null && userId != null) {
+        currentUser = AppUser(
+          id: userId,
+          role: roleFromString(role),
+          fullName: userName ?? '',
+          email: '',
+          phone: '',
+          isActive: true,
+        );
+        status = AuthStatus.authenticated;
+        PushNotificationService().init();
+        await refreshOnboardingStatus();
+      } else {
+        status = AuthStatus.unauthenticated;
+      }
+    } catch (_) {
+      // Secure storage can throw (e.g. PlatformException) if the keystore is unavailable or
+      // corrupted. Fall through to unauthenticated rather than leaving status stuck at
+      // `unknown`, which would strand the user on the splash screen forever.
       status = AuthStatus.unauthenticated;
     }
     notifyListeners();
@@ -175,7 +182,14 @@ class AuthProvider extends ChangeNotifier {
     currentUser = null;
     companyExists = null;
     kycSubmitted = null;
+    kycStatus = null;
     status = AuthStatus.unauthenticated;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    ApiClient.onSessionExpired = null;
+    super.dispose();
   }
 }

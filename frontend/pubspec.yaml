@@ -28,6 +28,10 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.2.3
 
+  # End-to-end chat encryption (Journey 11): X25519 key exchange + AES-256-GCM, entirely
+  # client-side — the server never has a decryption key.
+  cryptography: ^2.7.0
+
   # UI
   google_fonts: ^6.2.1
   flutter_svg: ^2.0.10+1

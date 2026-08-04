@@ -21,6 +21,12 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   bool _withdrawing = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _withdraw() async {
     final amount = double.tryParse(_amountCtrl.text);
     if (amount == null || amount <= 0) {

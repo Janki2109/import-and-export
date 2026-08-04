@@ -19,7 +19,11 @@ void main() async {
     debugPrint('Firebase init failed, push notifications disabled: $e');
   }
   await AppGuidePrefs.preload();
-  await AppConstants.resolveNetwork();
+  // Fire-and-forget: don't block the first frame on network resolution (up to a few
+  // seconds). The splash screen shows for a minimum duration (~3.6s) before any API
+  // call is made, which gives this plenty of time to complete in the background.
+  // ignore: unawaited_futures
+  AppConstants.resolveNetwork();
   runApp(const ProviderScope(child: OneBharatApp()));
 }
 

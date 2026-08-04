@@ -77,6 +77,18 @@ func (r *RFQRepository) ListOpenForExporter(ctx context.Context, exporterID stri
 		ORDER BY r.created_at DESC LIMIT $1 OFFSET $2`, limit, offset, exporterID)
 }
 
+// IsVisibleToExporter — same visibility rule ListOpenForExporter uses: untargeted RFQs are
+// visible to every exporter, targeted RFQs only to the exporters they were sent to. Used to
+// authorize a single-RFQ lookup (GetByID) the same way the browse listing is already gated.
+func (r *RFQRepository) IsVisibleToExporter(ctx context.Context, rfqID, exporterID string) (bool, error) {
+	var visible bool
+	err := r.db.QueryRow(ctx, `
+		SELECT NOT EXISTS (SELECT 1 FROM rfq_targets WHERE rfq_id = $1)
+			OR EXISTS (SELECT 1 FROM rfq_targets WHERE rfq_id = $1 AND exporter_id = $2)`,
+		rfqID, exporterID).Scan(&visible)
+	return visible, err
+}
+
 // AddTargets — records which exporters a targeted RFQ was sent to (Journey 3: "request
 // quotation" from a specific company profile). Rows here also feed AvgResponseTimeHours.
 func (r *RFQRepository) AddTargets(ctx context.Context, rfqID string, exporterIDs []string) error {

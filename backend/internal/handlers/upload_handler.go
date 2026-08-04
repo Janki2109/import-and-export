@@ -1,21 +1,26 @@
 package handlers
 
 import (
+	"bytes"
+	"io"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jayashri-infotech/onebharat-backend/internal/services"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/response"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/scan"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/storage"
 )
 
 type UploadHandler struct {
 	uploadService *services.UploadService
 	storage       storage.StorageService
+	scanner       scan.Scanner
 }
 
-func NewUploadHandler(uploadService *services.UploadService, storageService storage.StorageService) *UploadHandler {
-	return &UploadHandler{uploadService: uploadService, storage: storageService}
+func NewUploadHandler(uploadService *services.UploadService, storageService storage.StorageService, scanner scan.Scanner) *UploadHandler {
+	return &UploadHandler{uploadService: uploadService, storage: storageService, scanner: scanner}
 }
 
 type presignUploadRequest struct {
@@ -73,7 +78,31 @@ func (h *UploadHandler) PutLocalFile(c *gin.Context) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	if err := h.storage.Upload(c.Request.Context(), key, contentType, c.Request.Body); err != nil {
+
+	// SECURITY FIX ("secure upload flow... server-side validation"): previously no size limit
+	// was enforced at all — a client could stream an arbitrarily large body straight to disk.
+	// http.MaxBytesReader aborts the read (returning an error) once the limit is exceeded,
+	// rather than buffering an unbounded amount into memory first.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, services.MaxUploadBytes)
+
+	// Journey 11 "virus scanning": buffer into memory so the scanner can inspect it before
+	// anything reaches storage — an infected file is rejected outright, never stored. When no
+	// scanner is configured (NoopScanner), this is a no-op and behavior is unchanged from
+	// before scanning existed.
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "could not read upload body")
+		return
+	}
+	result, err := h.scanner.Scan(c.Request.Context(), body)
+	if err != nil {
+		log.Printf("virus scan failed for key %s: %v", key, err)
+	} else if result.Status == scan.StatusInfected {
+		response.Error(c, http.StatusBadRequest, "file rejected: failed virus scan ("+result.Details+")")
+		return
+	}
+
+	if err := h.storage.Upload(c.Request.Context(), key, contentType, bytes.NewReader(body)); err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}

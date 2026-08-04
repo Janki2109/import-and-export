@@ -43,7 +43,7 @@ class FleetService {
   }
 
   Future<void> delete(String id) async {
-    await _client.dio.delete('/fleet/$id');
+    await _client.delete('/fleet/$id');
   }
 }
 
@@ -83,7 +83,7 @@ class ProductService {
   }
 
   Future<void> delete(String id) async {
-    await _client.dio.delete('/products/$id');
+    await _client.delete('/products/$id');
   }
 }
 
@@ -102,7 +102,7 @@ class ApiKeyService {
   }
 
   Future<void> revoke(String id) async {
-    await _client.dio.delete('/api-keys/$id');
+    await _client.delete('/api-keys/$id');
   }
 }
 

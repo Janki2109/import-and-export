@@ -16,10 +16,32 @@ type KYCService struct {
 	auditRepo    *repository.AuditLogRepository
 	notification *NotificationService
 	razorpay     *razorpay.Client
+	docSecurity  *DocumentSecurityService
 }
 
-func NewKYCService(kycRepo *repository.KYCRepository, userRepo *repository.UserRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService, razorpayClient *razorpay.Client) *KYCService {
-	return &KYCService{kycRepo: kycRepo, userRepo: userRepo, auditRepo: auditRepo, notification: notification, razorpay: razorpayClient}
+func NewKYCService(kycRepo *repository.KYCRepository, userRepo *repository.UserRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService, razorpayClient *razorpay.Client, docSecurity *DocumentSecurityService) *KYCService {
+	return &KYCService{kycRepo: kycRepo, userRepo: userRepo, auditRepo: auditRepo, notification: notification, razorpay: razorpayClient, docSecurity: docSecurity}
+}
+
+// resolveDocURLs — security hardening: KYC document URLs are re-signed fresh on every read
+// (see DocumentSecurityService.ResolveStoredValue) rather than trusting whatever was stored at
+// submission time, since stored values are short-lived signed links or bare keys, never
+// permanent public paths.
+func (s *KYCService) resolveDocURLs(kyc *models.KYCDetails, baseURL string) {
+	if kyc == nil || s.docSecurity == nil {
+		return
+	}
+	resolve := func(v *string) *string {
+		if v == nil || *v == "" {
+			return v
+		}
+		r := s.docSecurity.ResolveStoredValue(*v, baseURL)
+		return &r
+	}
+	kyc.PANDocURL = resolve(kyc.PANDocURL)
+	kyc.GSTDocURL = resolve(kyc.GSTDocURL)
+	kyc.IECDocURL = resolve(kyc.IECDocURL)
+	kyc.AddressDocURL = resolve(kyc.AddressDocURL)
 }
 
 type SubmitKYCInput struct {
@@ -58,12 +80,24 @@ func (s *KYCService) Submit(ctx context.Context, in SubmitKYCInput) (*models.KYC
 	return k, nil
 }
 
-func (s *KYCService) GetStatus(ctx context.Context, userID string) (*models.KYCDetails, error) {
-	return s.kycRepo.GetByUserID(ctx, userID)
+func (s *KYCService) GetStatus(ctx context.Context, userID, baseURL string) (*models.KYCDetails, error) {
+	kyc, err := s.kycRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	s.resolveDocURLs(kyc, baseURL)
+	return kyc, nil
 }
 
-func (s *KYCService) ListPending(ctx context.Context, limit, offset int) ([]models.KYCDetails, error) {
-	return s.kycRepo.ListPending(ctx, limit, offset)
+func (s *KYCService) ListPending(ctx context.Context, limit, offset int, baseURL string) ([]models.KYCDetails, error) {
+	list, err := s.kycRepo.ListPending(ctx, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		s.resolveDocURLs(&list[i], baseURL)
+	}
+	return list, nil
 }
 
 // Approve — admin action. Also creates the Razorpay Contact + Fund Account for payouts, if

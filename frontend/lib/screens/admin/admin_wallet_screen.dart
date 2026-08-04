@@ -7,6 +7,7 @@ const _roleTabs = [
   (null, 'All'),
   ('importer', 'Importer'),
   ('exporter', 'Exporter'),
+  ('logistics', 'Logistics'),
   ('admin', 'Admin'),
 ];
 

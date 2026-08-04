@@ -27,44 +27,68 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
     final unitCtrl = TextEditingController(text: 'units');
     final priceCtrl = TextEditingController();
     final moqCtrl = TextEditingController(text: '1');
+    String? errorText;
 
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 20, right: 20, top: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Add Product', style: Theme.of(ctx).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Product Name')),
-            const SizedBox(height: 12),
-            TextField(controller: hsnCtrl, decoration: const InputDecoration(labelText: 'HS Code (optional)')),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: priceCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit Price (₹)'))),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: unitCtrl, decoration: const InputDecoration(labelText: 'Unit'))),
-            ]),
-            const SizedBox(height: 12),
-            TextField(controller: moqCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Minimum Order Quantity')),
-            const SizedBox(height: 20),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add Product')),
-            const SizedBox(height: 20),
-          ],
-        ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 20, right: 20, top: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Add Product', style: Theme.of(ctx).textTheme.titleLarge),
+                const SizedBox(height: 16),
+                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Product Name')),
+                const SizedBox(height: 12),
+                TextField(controller: hsnCtrl, decoration: const InputDecoration(labelText: 'HS Code (optional)')),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(child: TextField(controller: priceCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Unit Price (₹)'))),
+                  const SizedBox(width: 10),
+                  Expanded(child: TextField(controller: unitCtrl, decoration: const InputDecoration(labelText: 'Unit'))),
+                ]),
+                const SizedBox(height: 12),
+                TextField(controller: moqCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Minimum Order Quantity')),
+                if (errorText != null) ...[
+                  const SizedBox(height: 8),
+                  Text(errorText!, style: const TextStyle(color: AppColors.error, fontSize: 12.5)),
+                ],
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    final name = nameCtrl.text.trim();
+                    final price = double.tryParse(priceCtrl.text.trim());
+                    if (name.isEmpty) {
+                      setSheetState(() => errorText = 'Product name is required.');
+                      return;
+                    }
+                    if (price == null || price <= 0) {
+                      setSheetState(() => errorText = 'Enter a valid unit price greater than 0.');
+                      return;
+                    }
+                    Navigator.pop(ctx, true);
+                  },
+                  child: const Text('Add Product'),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
+          );
+        },
       ),
     );
-    if (confirmed != true || nameCtrl.text.trim().isEmpty || priceCtrl.text.trim().isEmpty) return;
+    if (confirmed != true) return;
 
     try {
       await _productService.create(
         name: nameCtrl.text.trim(),
         hsnCode: hsnCtrl.text.trim().isEmpty ? null : hsnCtrl.text.trim(),
         unit: unitCtrl.text.trim(),
-        unitPrice: double.parse(priceCtrl.text),
+        unitPrice: double.parse(priceCtrl.text.trim()),
         minOrderQty: double.tryParse(moqCtrl.text) ?? 1,
       );
       _refresh();
@@ -107,7 +131,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
                       icon: const Icon(Icons.delete_outline, color: AppColors.error),
                       onPressed: () async {
                         await _productService.delete(p.id);
-                        _refresh();
+                        if (mounted) _refresh();
                       },
                     ),
                   ),

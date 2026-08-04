@@ -141,7 +141,7 @@ class _NegotiationScreenState extends ConsumerState<NegotiationScreen> {
     try {
       final conversationId = await _chatService.startConversation(otherUserId);
       if (mounted) {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, otherUserName: 'Negotiation Discussion')));
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, otherUserName: 'Negotiation Discussion', otherUserId: otherUserId)));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
@@ -178,7 +178,12 @@ class _NegotiationScreenState extends ConsumerState<NegotiationScreen> {
           final (negotiation, offers) = snapshot.data!;
           final latest = offers.isNotEmpty ? offers.last : null;
           final isOpen = negotiation.status == 'open';
-          final myTurn = isOpen && latest != null && latest.createdBy != _myRole;
+          final currentUser = ref.watch(authProvider).currentUser;
+          final currentUserRole = currentUser?.role.name;
+          final isNegotiationParticipant = currentUser != null &&
+              ((currentUserRole == 'importer' && currentUser.id == negotiation.importerId) ||
+                  (currentUserRole == 'exporter' && currentUser.id == negotiation.exporterId));
+          final myTurn = isOpen && latest != null && isNegotiationParticipant && latest.createdBy != currentUserRole;
           final otherUserId = _myRole == 'importer' ? negotiation.exporterId : negotiation.importerId;
 
           return RefreshIndicator(
@@ -572,6 +577,18 @@ class _CounterOfferFormState extends State<_CounterOfferForm> {
   }
 
   @override
+  void dispose() {
+    _priceCtrl.dispose();
+    _qtyCtrl.dispose();
+    _moqCtrl.dispose();
+    _deliveryCtrl.dispose();
+    _dispatchCtrl.dispose();
+    _specialCtrl.dispose();
+    _remarksCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -610,7 +627,7 @@ class _CounterOfferFormState extends State<_CounterOfferForm> {
             trailing: const Icon(Icons.calendar_today_outlined),
             onTap: () async {
               final picked = await showDatePicker(context: context, initialDate: _validityDate ?? DateTime.now().add(const Duration(days: 15)), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
-              if (picked != null) setState(() => _validityDate = picked);
+              if (picked != null && mounted) setState(() => _validityDate = picked);
             },
           ),
           const SizedBox(height: 12),

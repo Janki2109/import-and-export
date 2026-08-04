@@ -26,6 +26,18 @@ class _CreateCompanyScreenState extends ConsumerState<CreateCompanyScreen> {
   final _websiteCtrl = TextEditingController();
   bool _loading = false;
 
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _businessTypeCtrl.dispose();
+    _regNumberCtrl.dispose();
+    _addressCtrl.dispose();
+    _cityCtrl.dispose();
+    _countryCtrl.dispose();
+    _websiteCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);

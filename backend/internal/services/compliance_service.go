@@ -14,10 +14,11 @@ type ComplianceService struct {
 	companyRepo  *repository.CompanyRepository
 	shipmentRepo *repository.ShipmentRepository
 	notification *NotificationService
+	docSecurity  *DocumentSecurityService
 }
 
-func NewComplianceService(repo *repository.ComplianceRepository, orderRepo *repository.OrderRepository, companyRepo *repository.CompanyRepository, shipmentRepo *repository.ShipmentRepository, notification *NotificationService) *ComplianceService {
-	return &ComplianceService{repo: repo, orderRepo: orderRepo, companyRepo: companyRepo, shipmentRepo: shipmentRepo, notification: notification}
+func NewComplianceService(repo *repository.ComplianceRepository, orderRepo *repository.OrderRepository, companyRepo *repository.CompanyRepository, shipmentRepo *repository.ShipmentRepository, notification *NotificationService, docSecurity *DocumentSecurityService) *ComplianceService {
+	return &ComplianceService{repo: repo, orderRepo: orderRepo, companyRepo: companyRepo, shipmentRepo: shipmentRepo, notification: notification, docSecurity: docSecurity}
 }
 
 // GenerateChecklist — called once, best-effort, right after an order is created (see
@@ -100,11 +101,23 @@ func (s *ComplianceService) authorize(ctx context.Context, orderID, requesterID 
 	return fmt.Errorf("not authorized to view this order's compliance checklist")
 }
 
-func (s *ComplianceService) GetForOrder(ctx context.Context, orderID, requesterID string, requesterRole models.UserRole) ([]models.OrderCompliance, error) {
+func (s *ComplianceService) GetForOrder(ctx context.Context, orderID, requesterID string, requesterRole models.UserRole, baseURL string) ([]models.OrderCompliance, error) {
 	if err := s.authorize(ctx, orderID, requesterID, requesterRole); err != nil {
 		return nil, err
 	}
-	return s.repo.ListForOrder(ctx, orderID)
+	items, err := s.repo.ListForOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if s.docSecurity != nil {
+		for i := range items {
+			if items[i].UploadedFile != nil && *items[i].UploadedFile != "" {
+				resolved := s.docSecurity.ResolveStoredValue(*items[i].UploadedFile, baseURL)
+				items[i].UploadedFile = &resolved
+			}
+		}
+	}
+	return items, nil
 }
 
 // ShipmentBlockStatus — informational: whether this order still has unmet mandatory
@@ -208,7 +221,7 @@ func (s *ComplianceService) maybeNotifyComplianceComplete(ctx context.Context, o
 	_ = s.notification.Send(ctx, order.ExporterID, "Compliance Completed", msg, "compliance", &order.ID)
 }
 
-func (s *ComplianceService) ListHistory(ctx context.Context, complianceID, requesterID string, requesterRole models.UserRole) ([]models.ComplianceDocumentHistory, error) {
+func (s *ComplianceService) ListHistory(ctx context.Context, complianceID, requesterID string, requesterRole models.UserRole, baseURL string) ([]models.ComplianceDocumentHistory, error) {
 	item, err := s.repo.GetByID(ctx, complianceID)
 	if err != nil || item == nil {
 		return nil, fmt.Errorf("compliance item not found")
@@ -216,7 +229,16 @@ func (s *ComplianceService) ListHistory(ctx context.Context, complianceID, reque
 	if err := s.authorize(ctx, item.OrderID, requesterID, requesterRole); err != nil {
 		return nil, err
 	}
-	return s.repo.ListHistory(ctx, complianceID)
+	history, err := s.repo.ListHistory(ctx, complianceID)
+	if err != nil {
+		return nil, err
+	}
+	if s.docSecurity != nil {
+		for i := range history {
+			history[i].FileURL = s.docSecurity.ResolveStoredValue(history[i].FileURL, baseURL)
+		}
+	}
+	return history, nil
 }
 
 // ---------------- Rule management (admin-only) ----------------

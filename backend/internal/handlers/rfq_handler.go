@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/services"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/response"
 )
@@ -82,7 +83,9 @@ func (h *RFQHandler) ListMyRFQs(c *gin.Context) {
 }
 
 func (h *RFQHandler) GetRFQ(c *gin.Context) {
-	rfq, err := h.rfqService.GetByID(c.Request.Context(), c.Param("id"))
+	userID := c.GetString("user_id")
+	role := models.UserRole(c.GetString("role"))
+	rfq, err := h.rfqService.GetByID(c.Request.Context(), c.Param("id"), userID, role)
 	if err != nil {
 		response.Error(c, http.StatusNotFound, err.Error())
 		return

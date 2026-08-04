@@ -66,7 +66,7 @@ class _MyRFQsScreenState extends ConsumerState<MyRFQsScreen> {
     return RfqReportData(
       rfqNumber: rfq.rfqNumber,
       issueDate: '${rfq.createdAt.toLocal()}'.split('.').first,
-      status: rfq.status[0].toUpperCase() + rfq.status.substring(1),
+      status: rfq.status.isNotEmpty ? rfq.status[0].toUpperCase() + rfq.status.substring(1) : 'Unknown',
       buyerName: auth.currentUser?.fullName ?? '',
       buyerCompany: auth.currentUser?.companyName ?? 'Not specified',
       buyerEmail: auth.currentUser?.email ?? '',

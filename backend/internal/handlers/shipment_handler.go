@@ -94,9 +94,11 @@ func (h *ShipmentHandler) UploadPOD(c *gin.Context) {
 
 func (h *ShipmentHandler) GetByOrder(c *gin.Context) {
 	orderID := c.Param("order_id")
-	shipment, err := h.shipmentService.GetByOrderID(c.Request.Context(), orderID)
+	userID := c.GetString("user_id")
+	role := c.GetString("role")
+	shipment, err := h.shipmentService.GetByOrderID(c.Request.Context(), orderID, userID, role)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.Error(c, http.StatusForbidden, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, shipment)
@@ -104,9 +106,11 @@ func (h *ShipmentHandler) GetByOrder(c *gin.Context) {
 
 func (h *ShipmentHandler) GetTimeline(c *gin.Context) {
 	shipmentID := c.Param("shipment_id")
-	events, err := h.shipmentService.GetTrackingTimeline(c.Request.Context(), shipmentID)
+	userID := c.GetString("user_id")
+	role := c.GetString("role")
+	events, err := h.shipmentService.GetTrackingTimeline(c.Request.Context(), shipmentID, userID, role)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.Error(c, http.StatusForbidden, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, events)

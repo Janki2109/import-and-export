@@ -79,6 +79,7 @@ type EscrowPayment struct {
 	Amount            float64       `json:"amount" db:"amount"`
 	PlatformFee       float64       `json:"platform_fee" db:"platform_fee"`
 	PayoutAmount      float64       `json:"payout_amount" db:"payout_amount"`
+	RefundedAmount    float64       `json:"refunded_amount" db:"refunded_amount"`
 	Status            PaymentStatus `json:"status" db:"status"`
 	HeldAt            *time.Time    `json:"held_at,omitempty" db:"held_at"`
 	ReleaseDueAt      *time.Time    `json:"release_due_at,omitempty" db:"release_due_at"`

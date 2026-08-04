@@ -65,7 +65,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
   Future<void> _pickPhoto() async {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     setState(() {
       _pickedPhoto = File(picked.path);
       _uploadingPhoto = true;

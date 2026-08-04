@@ -9,15 +9,25 @@ import 'wallet_transaction_helpers.dart';
 
 /// CSV is opened correctly by Excel/Sheets/Numbers alike, so it doubles as both the "CSV"
 /// and "Excel" export options without needing a binary .xlsx-writing dependency.
+/// Escapes a single CSV field per RFC 4180: wraps the value in double quotes if it
+/// contains a comma, double quote, or newline, doubling any embedded double quotes.
+String _csvEscapeField(String value) {
+  if (value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
+    return '"${value.replaceAll('"', '""')}"';
+  }
+  return value;
+}
+
 String buildWalletStatementCsv(List<LedgerEntry> transactions) {
-  final buffer = StringBuffer('Date,Time,Type,Description,Amount,Status,Reference\n');
+  final headers = ['Date', 'Time', 'Type', 'Description', 'Amount', 'Status', 'Reference'];
+  final buffer = StringBuffer('${headers.map(_csvEscapeField).join(',')}\n');
   for (final t in transactions) {
     final d = t.createdAt.toLocal();
     final date = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     final time = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
     final amount = (t.entryType == 'credit' ? '+' : '-') + t.amount.toStringAsFixed(2);
-    final desc = t.description.replaceAll(',', ';');
-    buffer.writeln('$date,$time,${txnKindLabel(classifyTxn(t))},$desc,$amount,${txnStatusLabel(t)},${t.referenceId ?? ''}');
+    final fields = [date, time, txnKindLabel(classifyTxn(t)), t.description, amount, txnStatusLabel(t), t.referenceId ?? ''];
+    buffer.writeln(fields.map(_csvEscapeField).join(','));
   }
   return buffer.toString();
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/reference.dart';
@@ -15,11 +17,24 @@ class _HSCodeSearchScreenState extends State<HSCodeSearchScreen> {
   List<HSCode> _results = [];
   bool _loading = false;
   String? _error;
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _search(''); // load the full HS code list up front
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () => _search(query));
   }
 
   Future<void> _search(String query) async {
@@ -56,13 +71,14 @@ class _HSCodeSearchScreenState extends State<HSCodeSearchScreen> {
                         ? IconButton(
                             icon: const Icon(Icons.clear),
                             onPressed: () {
+                              _debounce?.cancel();
                               _controller.clear();
                               _search('');
                             },
                           )
                         : null),
               ),
-              onChanged: _search,
+              onChanged: _onSearchChanged,
             ),
           ),
           if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(_error!, style: const TextStyle(color: AppColors.error))),

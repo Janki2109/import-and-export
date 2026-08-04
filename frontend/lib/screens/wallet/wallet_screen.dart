@@ -48,13 +48,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   void _refresh() => setState(() => _future = _tradeService.getMyWallet());
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _withdraw(double maxAmount) async {
     final done = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => WithdrawScreen(availableBalance: maxAmount)));
     if (done == true) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Withdrawal initiated to your linked bank account.'), backgroundColor: AppColors.success));
+        _refresh();
       }
-      _refresh();
     }
   }
 
@@ -85,7 +91,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   Future<void> _pickCustomRange() async {
     final range = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now());
-    if (range != null) setState(() { _customRange = range; _dateFilter = _DateRangeFilter.custom; });
+    if (range != null && mounted) setState(() { _customRange = range; _dateFilter = _DateRangeFilter.custom; });
   }
 
   Future<void> _downloadStatement(List<LedgerEntry> transactions, double balance) async {
@@ -103,7 +109,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         ),
       ),
     );
-    if (format == null) return;
+    if (format == null || !mounted) return;
 
     setState(() => _exporting = true);
     try {
@@ -212,7 +218,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       SliverToBoxAdapter(
                         child: _QuickActions(
                           onWithdraw: wallet.balance > 0 ? () => _withdraw(wallet.balance) : null,
-                          onHistory: () {}, // history is already the body of this screen
+                          onHistory: null, // history is already the body of this screen; disabled to avoid a no-op tap
                           onBankDetails: () => ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Bank details are managed during KYC approval — contact support to update them.')),
                           ),
@@ -383,7 +389,7 @@ class _WalletHeaderCard extends StatelessWidget {
 
 class _QuickActions extends StatelessWidget {
   final VoidCallback? onWithdraw;
-  final VoidCallback onHistory;
+  final VoidCallback? onHistory;
   final VoidCallback onBankDetails;
   final VoidCallback? onStatement;
   const _QuickActions({required this.onWithdraw, required this.onHistory, required this.onBankDetails, required this.onStatement});

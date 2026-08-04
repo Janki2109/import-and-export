@@ -65,6 +65,20 @@ class ChatMessage {
         createdAt: createdAt,
       );
 
+  /// Journey 11 — end-to-end encryption: used to replace ciphertext content with the locally
+  /// decrypted plaintext before display.
+  ChatMessage copyWithContent(String content) => ChatMessage(
+        id: id,
+        conversationId: conversationId,
+        senderId: senderId,
+        type: type,
+        content: content,
+        fileUrl: fileUrl,
+        quotationId: quotationId,
+        isRead: isRead,
+        createdAt: createdAt,
+      );
+
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         id: json['id'],
         conversationId: json['conversation_id'],

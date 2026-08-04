@@ -78,7 +78,7 @@ func (h *ChatHandler) ListMessages(c *gin.Context) {
 	userID := c.GetString("user_id")
 	conversationID := c.Param("id")
 
-	messages, err := h.chatService.ListMessages(c.Request.Context(), conversationID, userID)
+	messages, err := h.chatService.ListMessages(c.Request.Context(), conversationID, userID, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusForbidden, err.Error())
 		return

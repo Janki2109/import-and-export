@@ -5,9 +5,9 @@ import "time"
 type RFQStatus string
 
 const (
-	RFQOpen     RFQStatus = "open"
-	RFQQuoted   RFQStatus = "quoted"
-	RFQClosed   RFQStatus = "closed"
+	RFQOpen      RFQStatus = "open"
+	RFQQuoted    RFQStatus = "quoted"
+	RFQClosed    RFQStatus = "closed"
 	RFQCancelled RFQStatus = "cancelled"
 )
 
@@ -36,19 +36,19 @@ const (
 )
 
 type RFQ struct {
-	ID                  string    `json:"id" db:"id"`
-	RFQNumber           string    `json:"rfq_number" db:"rfq_number"`
-	ImporterID          string    `json:"importer_id" db:"importer_id"`
-	ProductName         string    `json:"product_name" db:"product_name"`
-	HSNCode             *string   `json:"hsn_code,omitempty" db:"hsn_code"`
-	Quantity            float64   `json:"quantity" db:"quantity"`
-	Unit                string    `json:"unit" db:"unit"`
-	TargetPrice         *float64  `json:"target_price,omitempty" db:"target_price"`
-	DestinationCountry  string    `json:"destination_country" db:"destination_country"`
-	Description         *string   `json:"description,omitempty" db:"description"`
-	Status              RFQStatus `json:"status" db:"status"`
-	CreatedAt           time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at" db:"updated_at"`
+	ID                 string    `json:"id" db:"id"`
+	RFQNumber          string    `json:"rfq_number" db:"rfq_number"`
+	ImporterID         string    `json:"importer_id" db:"importer_id"`
+	ProductName        string    `json:"product_name" db:"product_name"`
+	HSNCode            *string   `json:"hsn_code,omitempty" db:"hsn_code"`
+	Quantity           float64   `json:"quantity" db:"quantity"`
+	Unit               string    `json:"unit" db:"unit"`
+	TargetPrice        *float64  `json:"target_price,omitempty" db:"target_price"`
+	DestinationCountry string    `json:"destination_country" db:"destination_country"`
+	Description        *string   `json:"description,omitempty" db:"description"`
+	Status             RFQStatus `json:"status" db:"status"`
+	CreatedAt          time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
 }
 
 type Quotation struct {

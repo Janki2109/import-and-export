@@ -16,8 +16,8 @@ enum TxnKind { credit, debit, withdrawal, refund, commission }
 
 TxnKind classifyTxn(LedgerEntry t) {
   final desc = t.description.toLowerCase();
-  if (desc.contains('withdraw')) return TxnKind.withdrawal;
   if (desc.contains('refund')) return TxnKind.refund;
+  if (desc.contains('withdraw')) return TxnKind.withdrawal;
   if (desc.contains('commission')) return TxnKind.commission;
   return t.entryType == 'credit' ? TxnKind.credit : TxnKind.debit;
 }

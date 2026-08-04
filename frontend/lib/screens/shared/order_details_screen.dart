@@ -120,7 +120,7 @@ class _OrderDetailsScreenState extends ConsumerState<OrderDetailsScreen> {
     try {
       final conversationId = await _chatService.startConversation(otherUserId);
       if (mounted) {
-        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, otherUserName: otherUserName)));
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, otherUserName: otherUserName, otherUserId: otherUserId)));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
@@ -958,7 +958,7 @@ String _milestoneStatusLabel(String status) {
     case 'on_hold':
       return 'On Hold';
     default:
-      return status[0].toUpperCase() + status.substring(1);
+      return status.isEmpty ? status : status[0].toUpperCase() + status.substring(1);
   }
 }
 
@@ -1081,7 +1081,7 @@ class _PaymentScheduleSectionCardState extends ConsumerState<_PaymentScheduleSec
         (TextEditingController(text: 'Delivery Confirmed'), TextEditingController(text: '50')),
       ],
     ];
-    return showModalBottomSheet<List<Map<String, dynamic>>>(
+    final result = await showModalBottomSheet<List<Map<String, dynamic>>>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
@@ -1147,6 +1147,11 @@ class _PaymentScheduleSectionCardState extends ConsumerState<_PaymentScheduleSec
         ),
       ),
     );
+    for (final row in rows) {
+      row.$1.dispose();
+      row.$2.dispose();
+    }
+    return result;
   }
 
   @override
@@ -1177,10 +1182,12 @@ class _PaymentScheduleSectionCardState extends ConsumerState<_PaymentScheduleSec
         }
 
         final (terms, milestones) = data;
-        final paidCount = milestones.where((m) => m.status != 'pending').length;
+        final paidCount = milestones.where((m) => m.status == 'released').length;
         final releasedAmount = milestones.where((m) => m.status == 'released').fold<double>(0, (s, m) => s + m.amount);
         final remaining = terms.totalAmount - releasedAmount;
-        final nextPending = milestones.where((m) => m.status == 'pending').isEmpty ? null : milestones.firstWhere((m) => m.status == 'pending');
+        final milestonesByReleaseOrder = [...milestones]..sort((a, b) => a.releaseOrder.compareTo(b.releaseOrder));
+        final pendingByReleaseOrder = milestonesByReleaseOrder.where((m) => m.status == 'pending').toList();
+        final nextPending = pendingByReleaseOrder.isEmpty ? null : pendingByReleaseOrder.first;
         final isImporter = widget.order.importerId == _myId;
         final isExporter = widget.order.exporterId == _myId;
         final isAdmin = _myRole == 'admin';

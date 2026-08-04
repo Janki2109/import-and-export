@@ -75,6 +75,14 @@ func (r *UserRepository) SetRazorpayLinkage(ctx context.Context, userID, contact
 	return err
 }
 
+// SetChatPublicKey — Journey 11 "end-to-end encrypted chat": publishes this user's X25519
+// public key so any other user can derive a shared ECDH secret with them, entirely
+// client-side. The server never sees a private key.
+func (r *UserRepository) SetChatPublicKey(ctx context.Context, userID, publicKey string) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET chat_public_key = $1 WHERE id = $2`, publicKey, userID)
+	return err
+}
+
 // GetFirstAdmin returns the oldest admin account — used to resolve a "contact support"
 // conversation target without the user needing to know an admin's user ID.
 func (r *UserRepository) GetFirstAdmin(ctx context.Context) (*models.User, error) {
@@ -100,13 +108,13 @@ func (r *UserRepository) GetFirstAdmin(ctx context.Context) (*models.User, error
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
 	query := `SELECT id, role, full_name, company_name, email, phone, avatar_url, password_hash,
 		is_active, is_email_verified, is_phone_verified, razorpay_contact_id,
-		razorpay_fund_account_id, created_at, updated_at
+		razorpay_fund_account_id, chat_public_key, created_at, updated_at
 		FROM users WHERE id = $1`
 	var u models.User
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&u.ID, &u.Role, &u.FullName, &u.CompanyName, &u.Email, &u.Phone, &u.AvatarURL, &u.PasswordHash,
 		&u.IsActive, &u.IsEmailVerified, &u.IsPhoneVerified, &u.RazorpayContactID,
-		&u.RazorpayFundAccountID, &u.CreatedAt, &u.UpdatedAt,
+		&u.RazorpayFundAccountID, &u.ChatPublicKey, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {

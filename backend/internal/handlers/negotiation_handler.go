@@ -99,9 +99,11 @@ func (h *NegotiationHandler) ListMine(c *gin.Context) {
 // GetByQuotation — GET /negotiations/by-quotation/:quotationId — lets the UI check whether
 // a negotiation already exists for a quotation (to route "Negotiate" vs re-opening it).
 func (h *NegotiationHandler) GetByQuotation(c *gin.Context) {
-	negotiation, err := h.svc.GetByQuotationID(c.Request.Context(), c.Param("quotationId"))
+	userID := c.GetString("user_id")
+	role := models.UserRole(c.GetString("role"))
+	negotiation, err := h.svc.GetByQuotationID(c.Request.Context(), c.Param("quotationId"), userID, role)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.Error(c, http.StatusNotFound, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, negotiation)

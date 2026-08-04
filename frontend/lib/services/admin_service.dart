@@ -21,7 +21,7 @@ class AdminService {
   }
 
   Future<void> deleteUser(String userId) async {
-    await _client.dio.delete('/admin/users/$userId');
+    await _client.delete('/admin/users/$userId');
   }
 
   Future<List<dynamic>> listOrders({String? status}) async {
@@ -78,7 +78,7 @@ class AdminService {
   }
 
   Future<void> deleteRFQ(String id) async {
-    await _client.dio.delete('/admin/rfqs/$id');
+    await _client.delete('/admin/rfqs/$id');
   }
 
   Future<List<AdminShipmentRow>> listAllShipments() async {
@@ -93,6 +93,20 @@ class AdminService {
     return list.map((e) => FraudSignal.fromJson(e)).toList();
   }
 
+  /// Journey 12 — "security flags": the persisted findings from the backend's fraud sweep,
+  /// reviewable over time (unlike getFraudSignals, recomputed fresh on every call).
+  Future<List<SecurityFlag>> listSecurityFlags({bool? resolved}) async {
+    final res = await _client.get('/admin/security-flags', query: {
+      if (resolved != null) 'resolved': resolved.toString(),
+    });
+    final list = res.data['data'] as List? ?? [];
+    return list.map((e) => SecurityFlag.fromJson(e)).toList();
+  }
+
+  Future<void> resolveSecurityFlag(String flagId, {required String action, String? notes}) async {
+    await _client.post('/admin/security-flags/resolve/$flagId', data: {'action': action, 'notes': notes});
+  }
+
   Future<void> moderateProduct(String productId, bool active) async {
     await _client.post('/admin/products/$productId/moderate', data: {'active': active});
   }
@@ -105,7 +119,7 @@ class AdminService {
   }
 
   Future<void> deleteHSCode(String id) async {
-    await _client.dio.delete('/admin/hs-codes/$id');
+    await _client.delete('/admin/hs-codes/$id');
   }
 
   Future<void> createCountry({required String name, required String iso2, required String iso3, required String region, bool restricted = false, String? notes}) async {
@@ -119,7 +133,7 @@ class AdminService {
   }
 
   Future<void> deleteCountry(String id) async {
-    await _client.dio.delete('/admin/countries/$id');
+    await _client.delete('/admin/countries/$id');
   }
 
   // ---- Escrow (Admin Escrow Wallet) ----

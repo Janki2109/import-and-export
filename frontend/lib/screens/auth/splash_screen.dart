@@ -44,6 +44,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> with TickerProvider
   late final AnimationController _loop; // continuous, drives globe/plane/ship/truck/particles/rays/float
   bool _minDurationElapsed = false;
   bool _navigated = false;
+  bool _precached = false;
   String _version = '';
 
   static const _introDuration = Duration(milliseconds: 3600); // within the requested 3–4s
@@ -57,10 +58,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> with TickerProvider
         _maybeNavigate();
       });
     _loop = AnimationController(vsync: this, duration: const Duration(seconds: 10))..repeat();
-    precacheImage(const AssetImage('assets/images/app_logo.png'), context);
     PackageInfo.fromPlatform().then((info) {
       if (mounted) setState(() => _version = info.version);
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_precached) {
+      _precached = true;
+      precacheImage(const AssetImage('assets/images/app_logo.png'), context);
+    }
   }
 
   @override

@@ -20,6 +20,11 @@ func NewProfileService(userRepo *repository.UserRepository) *ProfileService {
 	return &ProfileService{userRepo: userRepo}
 }
 
+// SetChatPublicKey — Journey 11 "end-to-end encrypted chat".
+func (s *ProfileService) SetChatPublicKey(ctx context.Context, userID, publicKey string) error {
+	return s.userRepo.SetChatPublicKey(ctx, userID, publicKey)
+}
+
 func (s *ProfileService) GetProfile(ctx context.Context, userID string) (*models.User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {

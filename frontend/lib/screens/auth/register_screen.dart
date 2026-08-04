@@ -11,6 +11,9 @@ class RegisterScreen extends ConsumerStatefulWidget {
   ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
 }
 
+final _emailRegex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$');
+final _phoneRegex = RegExp(r'^[0-9]{10,15}$');
+
 class _RegisterScreenState extends ConsumerState<RegisterScreen> with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
@@ -154,14 +157,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> with SingleTick
                           controller: _emailCtrl,
                           keyboardType: TextInputType.emailAddress,
                           decoration: authFieldDecoration(label: 'Email', icon: Icons.email_outlined),
-                          validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
+                          validator: (v) => (v == null || !_emailRegex.hasMatch(v)) ? 'Enter a valid email' : null,
                         ),
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _phoneCtrl,
                           keyboardType: TextInputType.phone,
                           decoration: authFieldDecoration(label: 'Phone', icon: Icons.phone_outlined),
-                          validator: (v) => (v == null || v.length < 10) ? 'Enter a valid phone' : null,
+                          validator: (v) => (v == null || !_phoneRegex.hasMatch(v)) ? 'Enter a valid phone' : null,
                         ),
                         const SizedBox(height: 14),
                         TextFormField(

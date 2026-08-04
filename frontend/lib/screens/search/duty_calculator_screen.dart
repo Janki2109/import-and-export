@@ -34,6 +34,15 @@ class _DutyCalculatorScreenState extends State<DutyCalculatorScreen> {
   bool _saving = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _hsCodeCtrl.dispose();
+    _valueCtrl.dispose();
+    _productNameCtrl.dispose();
+    _countryCtrl.dispose();
+    super.dispose();
+  }
+
   // The duty math itself is untouched — same SearchService.calculateDuty() call as before.
   // Only the result presentation below has been redesigned into a full report.
   Future<void> _calculate() async {

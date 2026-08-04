@@ -100,12 +100,12 @@ func (s *AdminService) ModerateProduct(ctx context.Context, productID string, ac
 	return s.productRepo.AdminSetActive(ctx, productID, active)
 }
 
-func (s *AdminService) ListUsers(ctx context.Context, role *string) ([]models.User, error) {
-	return s.repo.ListUsers(ctx, role, 100, 0)
+func (s *AdminService) ListUsers(ctx context.Context, role *string, limit, offset int) ([]models.User, error) {
+	return s.repo.ListUsers(ctx, role, limit, offset)
 }
 
-func (s *AdminService) ListUsersRich(ctx context.Context, role *string) ([]repository.AdminUserRow, error) {
-	return s.repo.ListUsersRich(ctx, role, 300, 0)
+func (s *AdminService) ListUsersRich(ctx context.Context, role *string, limit, offset int) ([]repository.AdminUserRow, error) {
+	return s.repo.ListUsersRich(ctx, role, limit, offset)
 }
 
 func (s *AdminService) DeleteUser(ctx context.Context, userID string) error {
@@ -116,12 +116,12 @@ func (s *AdminService) SetUserActive(ctx context.Context, userID string, active 
 	return s.repo.SetUserActive(ctx, userID, active)
 }
 
-func (s *AdminService) ListOrders(ctx context.Context, status *string) ([]models.Order, error) {
-	return s.repo.ListAllOrders(ctx, status, 100, 0)
+func (s *AdminService) ListOrders(ctx context.Context, status *string, limit, offset int) ([]models.Order, error) {
+	return s.repo.ListAllOrders(ctx, status, limit, offset)
 }
 
-func (s *AdminService) ListOrdersRich(ctx context.Context, status *string) ([]repository.AdminOrderRow, error) {
-	return s.repo.ListAllOrdersRich(ctx, status, 300, 0)
+func (s *AdminService) ListOrdersRich(ctx context.Context, status *string, limit, offset int) ([]repository.AdminOrderRow, error) {
+	return s.repo.ListAllOrdersRich(ctx, status, limit, offset)
 }
 
 func (s *AdminService) ListQuotations(ctx context.Context) ([]repository.AdminQuotationRow, error) {
@@ -160,14 +160,14 @@ func (s *AdminService) DeleteRFQ(ctx context.Context, id string) error {
 	return s.repo.DeleteRFQ(ctx, id)
 }
 
-func (s *AdminService) ListShipments(ctx context.Context) ([]repository.AdminShipmentRow, error) {
-	return s.repo.ListAllShipments(ctx, 200, 0)
+func (s *AdminService) ListShipments(ctx context.Context, status *string, limit, offset int) ([]repository.AdminShipmentRow, error) {
+	return s.repo.ListAllShipments(ctx, status, limit, offset)
 }
 
 // ---------------- Escrow (Admin Escrow Wallet) ----------------
 
-func (s *AdminService) ListEscrowOrders(ctx context.Context, status *string) ([]repository.EscrowOrderRow, error) {
-	return s.escrowRepo.ListEscrowOrders(ctx, status, 100, 0)
+func (s *AdminService) ListEscrowOrders(ctx context.Context, status *string, limit, offset int) ([]repository.EscrowOrderRow, error) {
+	return s.escrowRepo.ListEscrowOrders(ctx, status, limit, offset)
 }
 
 func (s *AdminService) GetEscrowSummary(ctx context.Context) (*repository.EscrowSummary, error) {
@@ -187,6 +187,10 @@ func (s *AdminService) HoldPayment(ctx context.Context, orderID, adminID string)
 
 func (s *AdminService) RefundPayment(ctx context.Context, orderID, adminID, reason string) error {
 	return s.orderSvc.RefundPayment(ctx, orderID, adminID, reason)
+}
+
+func (s *AdminService) RefundPartial(ctx context.Context, orderID, adminID string, amount float64, reason string) error {
+	return s.orderSvc.RefundPartial(ctx, orderID, adminID, amount, reason)
 }
 
 // GetEscrowHistory — the audit trail for one order's escrow lifecycle (payment received,

@@ -347,8 +347,19 @@ func (s *NegotiationService) ListMine(ctx context.Context, userID string, role m
 	return s.repo.ListMine(ctx, userID, role)
 }
 
-func (s *NegotiationService) GetByQuotationID(ctx context.Context, quotationID string) (*models.Negotiation, error) {
-	return s.repo.GetByQuotationID(ctx, quotationID)
+// SECURITY FIX (document ownership validation): previously had no authorization check —
+// any authenticated user could look up the negotiation record for any quotation just by
+// knowing/guessing a quotationID, leaking the deal's parties and status. Now uses the same
+// authorize() check GetByID/GetTimeline already had.
+func (s *NegotiationService) GetByQuotationID(ctx context.Context, quotationID, requesterID string, requesterRole models.UserRole) (*models.Negotiation, error) {
+	n, err := s.repo.GetByQuotationID(ctx, quotationID)
+	if err != nil || n == nil {
+		return nil, fmt.Errorf("negotiation not found")
+	}
+	if err := s.authorize(n, requesterID, requesterRole); err != nil {
+		return nil, err
+	}
+	return n, nil
 }
 
 // ---------------- Admin ----------------

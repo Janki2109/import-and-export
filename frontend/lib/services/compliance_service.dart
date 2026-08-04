@@ -78,6 +78,6 @@ class ComplianceService {
   }
 
   Future<void> deleteRule(String id) async {
-    await _client.dio.delete('/admin/compliance-rules/$id');
+    await _client.delete('/admin/compliance-rules/$id');
   }
 }

@@ -59,6 +59,10 @@ type publicUser struct {
 	CompanyName *string `json:"company_name,omitempty"`
 	Role        string  `json:"role"`
 	AvatarURL   *string `json:"avatar_url,omitempty"`
+	// ChatPublicKey — Journey 11 "end-to-end encrypted chat": this user's X25519 public key, so
+	// any other user can derive a shared ECDH secret with them client-side. Safe to expose
+	// publicly — it's a public key by definition, not sensitive.
+	ChatPublicKey *string `json:"chat_public_key,omitempty"`
 }
 
 // GetPublicProfile — GET /users/public/:id. Trimmed, non-sensitive fields only (no email/
@@ -72,8 +76,29 @@ func (h *ProfileHandler) GetPublicProfile(c *gin.Context) {
 	}
 	response.Success(c, http.StatusOK, publicUser{
 		ID: user.ID, FullName: user.FullName, CompanyName: user.CompanyName,
-		Role: string(user.Role), AvatarURL: user.AvatarURL,
+		Role: string(user.Role), AvatarURL: user.AvatarURL, ChatPublicKey: user.ChatPublicKey,
 	})
+}
+
+type setChatPublicKeyRequest struct {
+	PublicKey string `json:"public_key" binding:"required"`
+}
+
+// SetChatPublicKey — POST /users/me/chat-public-key. Journey 11 "end-to-end encrypted chat":
+// the client generates an X25519 keypair locally (private key never leaves the device) and
+// publishes only the public key here.
+func (h *ProfileHandler) SetChatPublicKey(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req setChatPublicKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.profileService.SetChatPublicKey(c.Request.Context(), userID, req.PublicKey); err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "chat public key updated"})
 }
 
 type changePasswordRequest struct {

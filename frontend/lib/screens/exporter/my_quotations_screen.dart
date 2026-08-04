@@ -112,7 +112,7 @@ class _MyQuotationsScreenState extends State<MyQuotationsScreen> {
                   child: quotations.isEmpty
                       ? _EmptyState(onBrowse: () async {
                           await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseRFQsScreen()));
-                          _refresh();
+                          if (mounted) _refresh();
                         })
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),

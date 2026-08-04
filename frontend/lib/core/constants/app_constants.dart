@@ -7,18 +7,31 @@ class AppConstants {
   // AppConstants.resolveNetwork() probes this at startup and automatically falls back to
   // 10.0.2.2 (Android emulator's alias for the host machine) or localhost (iOS simulator)
   // if this address isn't reachable — see resolveNetwork() below.
-  static const String _configuredHost = '192.168.1.6';
+  static const String _lanIp = '192.168.1.6';
+  static const String _configuredHost = String.fromEnvironment(
+    'API_HOST',
+    defaultValue: _lanIp,
+  );
+  static const String _configuredScheme = String.fromEnvironment(
+    'API_SCHEME',
+    defaultValue: kDebugMode ? 'http' : 'https',
+  );
   static const int _port = 8081;
 
   static String _host = _configuredHost;
+  static const String _scheme = _configuredScheme;
 
-  static String get baseUrl => 'http://$_host:$_port/api/v1';
+  static String get baseUrl => '$_scheme://$_host:$_port/api/v1';
 
   /// Host root (no /api/v1) — used to resolve relative file_url paths returned by /documents endpoints.
-  static String get fileHostUrl => 'http://$_host:$_port';
+  static String get fileHostUrl => '$_scheme://$_host:$_port';
 
-  /// WebSocket endpoint for real-time chat — same host as baseUrl, ws:// scheme.
-  static String get chatWsUrl => 'ws://$_host:$_port/api/v1/ws/chat';
+  /// WebSocket endpoint for real-time chat — same host as baseUrl. Uses wss:// when the
+  /// base scheme is https, ws:// only in plain-http debug mode.
+  static String get chatWsUrl {
+    final wsScheme = _scheme == 'https' ? 'wss' : 'ws';
+    return '$wsScheme://$_host:$_port/api/v1/ws/chat';
+  }
 
   /// Probes the configured LAN IP at startup (short TCP connect, not an HTTP request) and
   /// switches to a platform-appropriate fallback if it's unreachable:
@@ -29,6 +42,12 @@ class AppConstants {
   /// at the real (mis)configured host rather than silently masking it.
   /// Call once, awaited, before runApp(). Never throws.
   static Future<void> resolveNetwork() async {
+    if (!kDebugMode) {
+      // In release builds we trust the configured host/scheme (defaults to https) and
+      // skip the LAN-IP auto-probe entirely.
+      _host = _configuredHost;
+      return;
+    }
     if (await _reachable(_configuredHost)) {
       _host = _configuredHost;
       if (kDebugMode) debugPrint('[AppConstants] Backend reachable at $_configuredHost:$_port');

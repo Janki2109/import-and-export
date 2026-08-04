@@ -90,8 +90,30 @@ func (s *RFQService) notifyExportersOfNewRFQ(ctx context.Context, rfq *models.RF
 	}
 }
 
-func (s *RFQService) GetByID(ctx context.Context, id string) (*models.RFQ, error) {
-	return s.rfqRepo.GetByID(ctx, id)
+// SECURITY FIX (document ownership validation): previously had no authorization check —
+// any authenticated user could view any RFQ by ID, including its TargetPrice, bypassing
+// deliberate exporter-targeting (a competing exporter never sent the RFQ could still read the
+// importer's target price). Now: the RFQ's own importer, an admin, or an exporter this RFQ is
+// actually visible to (untargeted, or specifically targeted at them) can view it — the same
+// rule ListOpenForExporter already enforces for browsing.
+func (s *RFQService) GetByID(ctx context.Context, id, requesterID string, requesterRole models.UserRole) (*models.RFQ, error) {
+	rfq, err := s.rfqRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if requesterRole == models.RoleAdmin || requesterID == rfq.ImporterID {
+		return rfq, nil
+	}
+	if requesterRole == models.RoleExporter {
+		visible, err := s.rfqRepo.IsVisibleToExporter(ctx, id, requesterID)
+		if err != nil {
+			return nil, err
+		}
+		if visible {
+			return rfq, nil
+		}
+	}
+	return nil, fmt.Errorf("not authorized to view this rfq")
 }
 
 func (s *RFQService) ListOpen(ctx context.Context, exporterID string) ([]models.RFQ, error) {

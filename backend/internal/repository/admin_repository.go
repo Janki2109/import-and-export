@@ -570,7 +570,9 @@ type AdminShipmentRow struct {
 	LogisticsName *string `json:"logistics_name,omitempty"`
 }
 
-func (r *AdminRepository) ListAllShipments(ctx context.Context, limit, offset int) ([]AdminShipmentRow, error) {
+// ListAllShipments — status is optional (Journey 12 "filters": previously this endpoint had no
+// filter at all).
+func (r *AdminRepository) ListAllShipments(ctx context.Context, status *string, limit, offset int) ([]AdminShipmentRow, error) {
 	query := `SELECT s.id, s.order_id, s.logistics_id, s.tracking_number, s.status,
 		s.pickup_address, s.delivery_address, s.carrier_name, s.estimated_delivery,
 		s.picked_up_at, s.delivered_at, s.created_at, s.updated_at,
@@ -580,8 +582,9 @@ func (r *AdminRepository) ListAllShipments(ctx context.Context, limit, offset in
 		JOIN users imp ON imp.id = o.importer_id
 		JOIN users exp ON exp.id = o.exporter_id
 		LEFT JOIN users log ON log.id = s.logistics_id
+		WHERE ($3::text IS NULL OR s.status::text = $3)
 		ORDER BY s.created_at DESC LIMIT $1 OFFSET $2`
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	rows, err := r.db.Query(ctx, query, limit, offset, status)
 	if err != nil {
 		return nil, err
 	}

@@ -25,7 +25,7 @@ func (h *ComplianceHandler) GetForOrder(c *gin.Context) {
 	role := models.UserRole(c.GetString("role"))
 	orderID := c.Param("id")
 
-	items, err := h.svc.GetForOrder(c.Request.Context(), orderID, userID, role)
+	items, err := h.svc.GetForOrder(c.Request.Context(), orderID, userID, role, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusForbidden, err.Error())
 		return
@@ -86,7 +86,7 @@ func (h *ComplianceHandler) UploadDocument(c *gin.Context) {
 func (h *ComplianceHandler) GetHistory(c *gin.Context) {
 	userID := c.GetString("user_id")
 	role := models.UserRole(c.GetString("role"))
-	history, err := h.svc.ListHistory(c.Request.Context(), c.Param("id"), userID, role)
+	history, err := h.svc.ListHistory(c.Request.Context(), c.Param("id"), userID, role, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusForbidden, err.Error())
 		return

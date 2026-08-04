@@ -181,7 +181,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                 onTap: () async {
                                   if (!isRead) {
                                     await _service.markRead(n['id']);
-                                    setState(() => n['is_read'] = true);
+                                    if (mounted) setState(() => n['is_read'] = true);
                                   }
                                 },
                               ),

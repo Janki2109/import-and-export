@@ -129,7 +129,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(labelText: 'Quantity'),
                         onChanged: (_) => setState(() {}),
-                        validator: (v) => (v == null || double.tryParse(v) == null) ? 'Invalid' : null,
+                        validator: (v) {
+                          final n = v == null ? null : double.tryParse(v);
+                          if (n == null) return 'Invalid';
+                          if (n <= 0) return 'Must be greater than 0';
+                          return null;
+                        },
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -148,7 +153,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(labelText: 'Unit Price (₹)'),
                   onChanged: (_) => setState(() {}),
-                  validator: (v) => (v == null || double.tryParse(v) == null) ? 'Invalid' : null,
+                  validator: (v) {
+                    final n = v == null ? null : double.tryParse(v);
+                    if (n == null) return 'Invalid';
+                    if (n <= 0) return 'Must be greater than 0';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(

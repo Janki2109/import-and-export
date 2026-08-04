@@ -4,28 +4,33 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/config"
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/stripe"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/upi"
 )
 
 type OrderService struct {
-	orderRepo    *repository.OrderRepository
-	escrowRepo   *repository.EscrowRepository
-	auditRepo    *repository.AuditLogRepository
-	disputeRepo  *repository.DisputeRepository
-	kycRepo      *repository.KYCRepository
-	cfg          *config.Config
-	notification *NotificationService
-	compliance   *ComplianceService
+	orderRepo        *repository.OrderRepository
+	escrowRepo       *repository.EscrowRepository
+	auditRepo        *repository.AuditLogRepository
+	disputeRepo      *repository.DisputeRepository
+	kycRepo          *repository.KYCRepository
+	paymentTermsRepo *repository.PaymentTermsRepository
+	cfg              *config.Config
+	notification     *NotificationService
+	compliance       *ComplianceService
+	stripe           *stripe.Client
 }
 
-func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, disputeRepo *repository.DisputeRepository, kycRepo *repository.KYCRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService) *OrderService {
-	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, disputeRepo: disputeRepo, kycRepo: kycRepo, cfg: cfg, notification: notification, compliance: compliance}
+func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, disputeRepo *repository.DisputeRepository, kycRepo *repository.KYCRepository, paymentTermsRepo *repository.PaymentTermsRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService, stripeClient *stripe.Client) *OrderService {
+	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, disputeRepo: disputeRepo, kycRepo: kycRepo, paymentTermsRepo: paymentTermsRepo, cfg: cfg, notification: notification, compliance: compliance, stripe: stripeClient}
 }
 
 func (s *OrderService) notify(ctx context.Context, userID, title, body, notifType string, refID *string) {
@@ -57,6 +62,7 @@ type CreateOrderInput struct {
 	Quantity        float64
 	Unit            string
 	UnitPrice       float64
+	Currency        string // Journey 10 "multi currency" — empty defaults to INR (existing behavior)
 	DeliveryAddress *string
 	Notes           *string
 }
@@ -82,6 +88,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 	feeAmount := round2(total * feePercent / 100)
 	payoutAmount := round2(total - feeAmount)
 
+	currency := in.Currency
+	if currency == "" {
+		currency = "INR"
+	}
+
 	order := &models.Order{
 		OrderNumber:          generateOrderNumber(),
 		ImporterID:           in.ImporterID,
@@ -91,7 +102,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 		Quantity:             in.Quantity,
 		Unit:                 in.Unit,
 		UnitPrice:            in.UnitPrice,
-		Currency:             "INR",
+		Currency:             currency,
 		TotalAmount:          total,
 		PlatformFeePercent:   feePercent,
 		PlatformFeeAmount:    feeAmount,
@@ -113,7 +124,14 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 		return nil, nil, "", fmt.Errorf("create order: %w", err)
 	}
 
-	upiLink := upi.BuildPaymentLink(s.cfg.PlatformUPIVPA, s.cfg.PlatformUPIPayeeName, total, order.OrderNumber, "Escrow payment for "+order.OrderNumber)
+	// UPI is an India-domestic payment rail — only build a upi://pay link for INR orders.
+	// International (non-INR) orders pay via bank transfer instead (see ConfirmBankTransfer)
+	// or Stripe once configured; the frontend checks for an empty upiLink to know which
+	// payment instructions to show.
+	upiLink := ""
+	if currency == "INR" {
+		upiLink = upi.BuildPaymentLink(s.cfg.PlatformUPIVPA, s.cfg.PlatformUPIPayeeName, total, order.OrderNumber, "Escrow payment for "+order.OrderNumber)
+	}
 	if err := s.escrowRepo.SetRazorpayOrder(ctx, escrow.ID, order.OrderNumber); err != nil {
 		return order, escrow, "", fmt.Errorf("saving payment reference: %w", err)
 	}
@@ -164,6 +182,22 @@ func (s *OrderService) GetEscrowStatus(ctx context.Context, orderID, requesterID
 // ConfirmPaymentDone — the importer self-declares "I've paid via UPI" after returning from
 // their UPI app. Unlike the old Razorpay flow there's no signature to verify; this is a
 // trust-based confirmation by design (see pkg/upi doc comment for the tradeoff).
+// rejectIfMilestoneTermsExist — SECURITY/LOGIC FIX (C-03): escrow's single-payment release and
+// the milestone-escrow module's per-milestone release both independently credit the exporter
+// for the same order with nothing making them mutually exclusive — a milestone schedule set up
+// on an order whose escrow later auto-releases (or vice versa) results in the exporter being
+// paid twice for one collected payment. An order that already has payment terms set up must use
+// ONLY the milestone release path; refuse to also start the single-payment escrow rail for it.
+func (s *OrderService) rejectIfMilestoneTermsExist(ctx context.Context, orderID string) error {
+	if s.paymentTermsRepo == nil {
+		return nil
+	}
+	if terms, err := s.paymentTermsRepo.GetByOrderID(ctx, orderID); err == nil && terms != nil {
+		return fmt.Errorf("this order uses milestone-based payment terms — pay via its milestone schedule instead")
+	}
+	return nil
+}
+
 func (s *OrderService) ConfirmPaymentDone(ctx context.Context, orderID, importerID string) error {
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
@@ -175,6 +209,9 @@ func (s *OrderService) ConfirmPaymentDone(ctx context.Context, orderID, importer
 	if order.Status != models.OrderCreated {
 		return fmt.Errorf("cannot confirm payment: order status is %s", order.Status)
 	}
+	if err := s.rejectIfMilestoneTermsExist(ctx, order.ID); err != nil {
+		return err
+	}
 
 	if err := s.escrowRepo.MarkHeld(ctx, order.ID, "UPI-SELF-CONFIRMED", order.AutoReleaseDays); err != nil {
 		return err
@@ -185,6 +222,132 @@ func (s *OrderService) ConfirmPaymentDone(ctx context.Context, orderID, importer
 	s.notify(ctx, order.ImporterID, "Escrow Locked", fmt.Sprintf("Your payment for order %s is recorded and held in escrow.", order.OrderNumber), "payment", &order.ID)
 	_ = s.notification.NotifyAdmin(ctx, "New Escrow", fmt.Sprintf("₹%.2f collected and held in escrow for order %s.", order.TotalAmount, order.OrderNumber), "escrow", &order.ID)
 	return nil
+}
+
+// ConfirmBankTransfer — Journey 10 "bank transfer": the importer self-declares having wired
+// the money to the platform's bank account, providing a reference/UTR number for
+// reconciliation. Same trust model and escrow effect as ConfirmPaymentDone (UPI) — no gateway
+// integration, importer-declared — just a different payment rail, mainly for international
+// (non-INR) orders where UPI isn't available.
+func (s *OrderService) ConfirmBankTransfer(ctx context.Context, orderID, importerID, referenceNumber string) error {
+	if referenceNumber == "" {
+		return fmt.Errorf("a bank transfer reference/UTR number is required")
+	}
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order.ImporterID != importerID {
+		return fmt.Errorf("not authorized: this order does not belong to you")
+	}
+	if order.Status != models.OrderCreated {
+		return fmt.Errorf("cannot confirm payment: order status is %s", order.Status)
+	}
+	if err := s.rejectIfMilestoneTermsExist(ctx, order.ID); err != nil {
+		return err
+	}
+
+	if err := s.escrowRepo.MarkHeld(ctx, order.ID, "BANK-TRANSFER-"+referenceNumber, order.AutoReleaseDays); err != nil {
+		return err
+	}
+	s.audit(ctx, importerID, "escrow.payment_received", order.ID, map[string]interface{}{"amount": order.TotalAmount, "method": "bank_transfer", "reference": referenceNumber})
+
+	s.notify(ctx, order.ExporterID, "New Order Received", fmt.Sprintf("Payment for order %s marked as paid by the importer via bank transfer. Prepare the shipment.", order.OrderNumber), "order_update", &order.ID)
+	s.notify(ctx, order.ImporterID, "Escrow Locked", fmt.Sprintf("Your bank transfer for order %s is recorded and held in escrow.", order.OrderNumber), "payment", &order.ID)
+	_ = s.notification.NotifyAdmin(ctx, "New Escrow (Bank Transfer)", fmt.Sprintf("%s %.2f reported via bank transfer (ref %s) for order %s — verify against bank statement.", order.Currency, order.TotalAmount, referenceNumber, order.OrderNumber), "escrow", &order.ID)
+	return nil
+}
+
+// ConfirmPaymentViaGateway — Journey 10 "webhook verification": called only after a webhook
+// handler has cryptographically verified the gateway's signature (Razorpay or Stripe) on a
+// payment-succeeded event. Unlike ConfirmPaymentDone/ConfirmBankTransfer (self-declared, no
+// proof), this has actual gateway-verified proof of payment — gatewayReference is the
+// Razorpay payment ID or Stripe PaymentIntent ID, stored the same way UPI/bank-transfer
+// references are.
+// ConfirmPaymentViaGateway — SECURITY FIX (C-02): previously marked full escrow held on any
+// genuinely-signed webhook with a matching order_id, WITHOUT ever checking the amount actually
+// paid or its currency. Anyone who created a Rs.1 payment carrying notes.order_id for a
+// Rs.10,00,000 order would have the full order amount held in escrow and (after auto-release)
+// paid out. paidAmountMinor is the amount actually captured, in the gateway's minor currency
+// unit (paise/cents); paidCurrency is the gateway's ISO currency code. Both are now compared
+// against the order's own recorded total/currency before anything is marked held.
+func (s *OrderService) ConfirmPaymentViaGateway(ctx context.Context, orderID, gatewayReference string, paidAmountMinor int64, paidCurrency string) error {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order.Status != models.OrderCreated {
+		// BUG FIX (H-10): this is also what makes ConfirmPaymentViaGateway idempotent on
+		// payment id — a retried/duplicate webhook for an order already past "created" is a
+		// no-op error here, not a double-hold.
+		return fmt.Errorf("cannot confirm payment: order status is %s", order.Status)
+	}
+	if err := s.rejectIfMilestoneTermsExist(ctx, order.ID); err != nil {
+		return err
+	}
+
+	// BUG FIX (H-17): use math.Round instead of truncating float->int64, which previously
+	// under-collected ~5.7% of orders by one minor unit versus orders.total_amount.
+	expectedMinor := int64(math.Round(order.TotalAmount * 100))
+	if paidAmountMinor < expectedMinor {
+		return fmt.Errorf("payment amount mismatch: expected %d minor units, gateway reported %d", expectedMinor, paidAmountMinor)
+	}
+	if paidCurrency != "" && order.Currency != "" && !strings.EqualFold(paidCurrency, order.Currency) {
+		return fmt.Errorf("payment currency mismatch: order is %s, gateway reported %s", order.Currency, paidCurrency)
+	}
+
+	if err := s.escrowRepo.MarkHeld(ctx, order.ID, gatewayReference, order.AutoReleaseDays); err != nil {
+		return err
+	}
+	s.audit(ctx, "", "escrow.payment_received", order.ID, map[string]interface{}{"amount": order.TotalAmount, "method": "gateway_webhook", "reference": gatewayReference})
+
+	s.notify(ctx, order.ExporterID, "New Order Received", fmt.Sprintf("Payment for order %s confirmed by the payment gateway. Prepare the shipment.", order.OrderNumber), "order_update", &order.ID)
+	s.notify(ctx, order.ImporterID, "Escrow Locked", fmt.Sprintf("Your payment for order %s is confirmed and held in escrow.", order.OrderNumber), "payment", &order.ID)
+	return nil
+}
+
+// CreateStripePaymentIntent — Journey 10 "Stripe": an alternative to UPI/bank transfer for
+// international/card-paying importers on non-INR orders. Returns the client secret the
+// frontend needs to confirm payment with Stripe.js/Flutter's Stripe SDK; escrow is marked
+// held only once the webhook confirms payment_intent.succeeded (see WebhookHandler.Stripe /
+// ConfirmPaymentViaGateway) — this call alone does not move any money.
+func (s *OrderService) CreateStripePaymentIntent(ctx context.Context, orderID, importerID string) (*stripe.PaymentIntent, error) {
+	if s.stripe == nil || !s.stripe.Configured() {
+		return nil, fmt.Errorf("card payments are not available right now")
+	}
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.ImporterID != importerID {
+		return nil, fmt.Errorf("not authorized: this order does not belong to you")
+	}
+	if order.Status != models.OrderCreated {
+		return nil, fmt.Errorf("cannot start payment: order status is %s", order.Status)
+	}
+	amountMinor := int64(round2(order.TotalAmount) * 100)
+	return s.stripe.CreatePaymentIntent(ctx, amountMinor, order.Currency, order.ID)
+}
+
+// BankTransferDetails — the platform's bank account for importers paying via wire transfer.
+type BankTransferInfo struct {
+	AccountName   string `json:"account_name"`
+	AccountNumber string `json:"account_number"`
+	IFSC          string `json:"ifsc"`
+	SWIFT         string `json:"swift"`
+	BankName      string `json:"bank_name"`
+	Configured    bool   `json:"configured"`
+}
+
+func (s *OrderService) BankTransferDetails() BankTransferInfo {
+	return BankTransferInfo{
+		AccountName:   s.cfg.PlatformBankAccountName,
+		AccountNumber: s.cfg.PlatformBankAccountNumber,
+		IFSC:          s.cfg.PlatformBankIFSC,
+		SWIFT:         s.cfg.PlatformBankSWIFT,
+		BankName:      s.cfg.PlatformBankName,
+		Configured:    s.cfg.PlatformBankAccountNumber != "",
+	}
 }
 
 // ConfirmDeliveryAndRelease: importer confirms goods received, or admin releases directly
@@ -275,6 +438,27 @@ func (s *OrderService) RefundPayment(ctx context.Context, orderID, adminID, reas
 
 	s.notify(ctx, order.ImporterID, "Payment Refunded", fmt.Sprintf("Your payment for order %s has been refunded: %s", order.OrderNumber, reason), "payment", &order.ID)
 	s.notify(ctx, order.ExporterID, "Order Refunded", fmt.Sprintf("Order %s was refunded to the importer: %s", order.OrderNumber, reason), "payment", &order.ID)
+	return nil
+}
+
+// RefundPartial — Journey 10 "partial refund": admin refunds only part of a held/on-hold
+// escrow (e.g. a shortage settlement), leaving the remainder available for normal release.
+// Same open-dispute guard as the full-refund path.
+func (s *OrderService) RefundPartial(ctx context.Context, orderID, adminID string, amount float64, reason string) error {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
+		return fmt.Errorf("cannot refund directly: order has an open dispute — resolve it via the Disputes screen instead")
+	}
+	if err := s.escrowRepo.RefundPartial(ctx, orderID, order.ImporterID, amount); err != nil {
+		return fmt.Errorf("partial refund: %w", err)
+	}
+	s.audit(ctx, adminID, "escrow.partial_refund", order.ID, map[string]interface{}{"amount": amount, "reason": reason})
+
+	s.notify(ctx, order.ImporterID, "Partial Refund Issued", fmt.Sprintf("₹%.2f of your payment for order %s has been refunded: %s", amount, order.OrderNumber, reason), "payment", &order.ID)
+	s.notify(ctx, order.ExporterID, "Partial Refund Issued", fmt.Sprintf("A partial refund of ₹%.2f was issued to the importer for order %s: %s", amount, order.OrderNumber, reason), "payment", &order.ID)
 	return nil
 }
 

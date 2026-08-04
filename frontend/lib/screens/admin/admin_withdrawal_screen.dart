@@ -67,10 +67,15 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      reasonCtrl.dispose();
+      return;
+    }
+    final reason = reasonCtrl.text.trim().isEmpty ? 'Rejected by admin' : reasonCtrl.text.trim();
+    reasonCtrl.dispose();
     setState(() => _busy = true);
     try {
-      await _adminService.rejectWithdrawal(w.id, reasonCtrl.text.trim().isEmpty ? 'Rejected by admin' : reasonCtrl.text.trim());
+      await _adminService.rejectWithdrawal(w.id, reason);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Withdrawal rejected and refunded'), backgroundColor: AppColors.success));
         _refresh();

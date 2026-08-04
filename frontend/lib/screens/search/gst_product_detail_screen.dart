@@ -43,8 +43,9 @@ class _GSTProductDetailScreenState extends State<GSTProductDetailScreen> {
   Future<void> _toggleBookmark() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('gst_bookmarked_hs_codes') ?? [];
-    setState(() => _bookmarked = !_bookmarked);
-    if (_bookmarked) {
+    final newValue = !_bookmarked;
+    if (mounted) setState(() => _bookmarked = newValue);
+    if (newValue) {
       saved.add(widget.product.code);
     } else {
       saved.remove(widget.product.code);

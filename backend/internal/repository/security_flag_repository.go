@@ -8,13 +8,13 @@ import (
 )
 
 type SecurityFlag struct {
-	ID          string
-	UserID      *string
-	Rule        string
-	Severity    string
-	Description string
-	Resolved    bool
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	UserID      *string   `json:"user_id,omitempty"`
+	Rule        string    `json:"rule"`
+	Severity    string    `json:"severity"`
+	Description string    `json:"description"`
+	Resolved    bool      `json:"resolved"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // SecurityFlagRepository persists FraudService's findings (Part 7/8) so they survive past a
@@ -57,6 +57,16 @@ func (r *SecurityFlagRepository) List(ctx context.Context, resolvedFilter *bool,
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+func (r *SecurityFlagRepository) GetByID(ctx context.Context, id string) (*SecurityFlag, error) {
+	var f SecurityFlag
+	err := r.db.QueryRow(ctx, `SELECT id, user_id, rule, severity, description, resolved, created_at FROM security_flags WHERE id = $1`, id).
+		Scan(&f.ID, &f.UserID, &f.Rule, &f.Severity, &f.Description, &f.Resolved, &f.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
 }
 
 func (r *SecurityFlagRepository) Resolve(ctx context.Context, id string) error {

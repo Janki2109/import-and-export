@@ -18,15 +18,18 @@ func NewEscrowRepository(db *pgxpool.Pool) *EscrowRepository {
 }
 
 func (r *EscrowRepository) GetByOrderID(ctx context.Context, orderID string) (*models.EscrowPayment, error) {
+	// BUG FIX (M-09): refunded_amount was never read, so every consumer of this row reported
+	// pre-refund payout figures — after a partial refund the exporter would still be told the
+	// full pre-refund amount was released.
 	query := `SELECT id, order_id, razorpay_order_id, razorpay_payment_id, razorpay_payout_id,
-		amount, platform_fee, payout_amount, status, held_at, release_due_at, released_at,
+		amount, platform_fee, payout_amount, refunded_amount, status, held_at, release_due_at, released_at,
 		refunded_at, admin_notified_at, failure_reason, created_at, updated_at
 		FROM escrow_payments WHERE order_id = $1`
 
 	var e models.EscrowPayment
 	err := r.db.QueryRow(ctx, query, orderID).Scan(
 		&e.ID, &e.OrderID, &e.RazorpayOrderID, &e.RazorpayPaymentID, &e.RazorpayPayoutID,
-		&e.Amount, &e.PlatformFee, &e.PayoutAmount, &e.Status, &e.HeldAt, &e.ReleaseDueAt,
+		&e.Amount, &e.PlatformFee, &e.PayoutAmount, &e.RefundedAmount, &e.Status, &e.HeldAt, &e.ReleaseDueAt,
 		&e.ReleasedAt, &e.RefundedAt, &e.AdminNotifiedAt, &e.FailureReason, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err != nil {
@@ -98,15 +101,30 @@ func (r *EscrowRepository) MarkReleased(ctx context.Context, orderID, exporterID
 	}
 	defer tx.Rollback(ctx)
 
-	var payoutAmount, platformFee float64
+	var payoutAmount, platformFee, refundedAmount float64
 	err = tx.QueryRow(ctx, `
 		UPDATE escrow_payments
 		SET status = 'released', razorpay_payout_id = $1, released_at = now()
 		WHERE order_id = $2 AND status IN ('held', 'on_hold')
-		RETURNING payout_amount, platform_fee`,
-		rzpPayoutID, orderID).Scan(&payoutAmount, &platformFee)
+		RETURNING payout_amount, platform_fee, refunded_amount`,
+		rzpPayoutID, orderID).Scan(&payoutAmount, &platformFee, &refundedAmount)
 	if err != nil {
 		return fmt.Errorf("update escrow to released: %w", err)
+	}
+
+	// BUG FIX (Journey 10 — partial refund): if part of this escrow was already refunded to
+	// the importer (RefundPartial), releasing the original full payout_amount would over-pay
+	// the exporter beyond what's actually still held — the refund comes out of the exporter's
+	// share first (it's their goods/fulfillment the refund was against), then the platform fee
+	// if the refund exceeds the payout amount.
+	netPayout := payoutAmount - refundedAmount
+	netFee := platformFee
+	if netPayout < 0 {
+		netFee += netPayout // reduce fee by the overflow
+		netPayout = 0
+	}
+	if netFee < 0 {
+		netFee = 0
 	}
 
 	_, err = tx.Exec(ctx, `UPDATE orders SET status = 'payment_released' WHERE id = $1`, orderID)
@@ -114,13 +132,20 @@ func (r *EscrowRepository) MarkReleased(ctx context.Context, orderID, exporterID
 		return err
 	}
 
-	// Ledger: debit platform's held liability, credit exporter payout, credit platform fee revenue
+	// BUG FIX (C-07): this INSERT previously contained only the two credit rows (exporter
+	// payout, platform fee) despite the comment above already describing three — the reversing
+	// debit against the platform's held liability (booked as a credit in MarkHeld) was never
+	// written, so ledger_entries — documented elsewhere as "the source of truth, append-only,
+	// auditable" — never actually balanced; credits exceeded debits by the full GMV of every
+	// released order. Ledger: debit platform's held liability, credit exporter payout, credit
+	// platform fee revenue.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
 		VALUES
+			($1, NULL, 'debit', $6, 'Escrow released — held liability reversed', $4),
 			($1, $2, 'credit', $3, 'Payout released for delivered order', $4),
 			($1, NULL, 'credit', $5, 'Platform fee earned', $4)`,
-		orderID, exporterID, payoutAmount, rzpPayoutID, platformFee)
+		orderID, exporterID, netPayout, rzpPayoutID, netFee, netPayout+netFee)
 	if err != nil {
 		return fmt.Errorf("ledger entries: %w", err)
 	}
@@ -146,13 +171,23 @@ func (r *EscrowRepository) MarkRefunded(ctx context.Context, orderID, importerID
 	}
 	defer tx.Rollback(ctx)
 
+	// BUG FIX (C-05): previously `RETURNING amount` returned the GROSS escrow amount and never
+	// consulted refunded_amount, so an escrow that had already been RefundPartial'd (status
+	// stays 'held') could be refunded a second time in full here — e.g. via a dispute resolved
+	// as "refund" — crediting the importer amount+refunded_amount against a single collected
+	// payment. Now returns only the remaining unrefunded balance and marks the full original
+	// amount as refunded in the same statement, closing the double-refund gap.
 	var amount float64
 	err = tx.QueryRow(ctx, `
-		UPDATE escrow_payments SET status = 'refunded', refunded_at = now()
-		WHERE order_id = $1 AND status IN ('held', 'on_hold')
-		RETURNING amount`, orderID).Scan(&amount)
+		UPDATE escrow_payments AS e SET status = 'refunded', refunded_at = now(), refunded_amount = e.amount
+		FROM (SELECT amount, refunded_amount FROM escrow_payments WHERE order_id = $1 AND status IN ('held', 'on_hold') FOR UPDATE) AS old
+		WHERE e.order_id = $1 AND e.status IN ('held', 'on_hold')
+		RETURNING old.amount - old.refunded_amount`, orderID).Scan(&amount)
 	if err != nil {
 		return fmt.Errorf("escrow payment for order %s is not in a refundable state: %w", orderID, err)
+	}
+	if amount <= 0 {
+		return fmt.Errorf("escrow payment for order %s has already been fully refunded", orderID)
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'refunded' WHERE id = $1`, orderID); err != nil {
@@ -165,6 +200,69 @@ func (r *EscrowRepository) MarkRefunded(ctx context.Context, orderID, importerID
 		VALUES
 			($1, NULL, 'debit', $2, 'Escrow refunded — held liability reversed', $3),
 			($1, $4, 'credit', $2, 'Refund credited', $3)`,
+		orderID, amount, orderID, importerID)
+	if err != nil {
+		return fmt.Errorf("ledger entries: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// RefundPartial — Journey 10 "partial refund": refunds only part of a held/on_hold escrow
+// (e.g. a shortage or damaged-portion settlement), leaving the remainder held for eventual
+// normal release. Tracked via refunded_amount rather than flipping escrow status, so a
+// partially-refunded order can still proceed through the normal delivery-confirm/release flow
+// for its remaining balance. If the requested amount would exhaust the remaining balance, this
+// completes as a full refund (status -> 'refunded', order -> 'refunded'), same end state as
+// MarkRefunded.
+func (r *EscrowRepository) RefundPartial(ctx context.Context, orderID, importerID string, amount float64) error {
+	if amount <= 0 {
+		return fmt.Errorf("refund amount must be positive")
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var totalAmount, alreadyRefunded float64
+	var status string
+	err = tx.QueryRow(ctx, `
+		SELECT amount, refunded_amount, status FROM escrow_payments
+		WHERE order_id = $1 AND status IN ('held', 'on_hold') FOR UPDATE`, orderID).
+		Scan(&totalAmount, &alreadyRefunded, &status)
+	if err != nil {
+		return fmt.Errorf("escrow payment for order %s is not in a refundable state: %w", orderID, err)
+	}
+	remaining := totalAmount - alreadyRefunded
+	if amount > remaining {
+		return fmt.Errorf("refund amount %.2f exceeds remaining refundable balance %.2f", amount, remaining)
+	}
+
+	newRefunded := alreadyRefunded + amount
+	isFull := newRefunded >= totalAmount
+
+	if isFull {
+		if _, err := tx.Exec(ctx, `
+			UPDATE escrow_payments SET refunded_amount = $1, status = 'refunded', refunded_at = now()
+			WHERE order_id = $2`, newRefunded, orderID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'refunded' WHERE id = $1`, orderID); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(ctx, `
+			UPDATE escrow_payments SET refunded_amount = $1 WHERE order_id = $2`, newRefunded, orderID); err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
+		VALUES
+			($1, NULL, 'debit', $2, 'Escrow partially refunded — held liability reversed', $3),
+			($1, $4, 'credit', $2, 'Partial refund credited', $3)`,
 		orderID, amount, orderID, importerID)
 	if err != nil {
 		return fmt.Errorf("ledger entries: %w", err)
@@ -189,10 +287,10 @@ func (r *EscrowRepository) MarkAdminNotified(ctx context.Context, orderID string
 
 // EscrowSummary — aggregate totals for the admin escrow dashboard.
 type EscrowSummary struct {
-	HoldingBalance   float64 `json:"holding_balance"`   // held + on_hold, not yet released or refunded
-	PendingRelease   float64 `json:"pending_release"`    // held only (on_hold excluded — it's paused, not "pending")
-	TotalReleased    float64 `json:"total_released"`
-	TotalRefunded    float64 `json:"total_refunded"`
+	HoldingBalance float64 `json:"holding_balance"` // held + on_hold, not yet released or refunded
+	PendingRelease float64 `json:"pending_release"` // held only (on_hold excluded — it's paused, not "pending")
+	TotalReleased  float64 `json:"total_released"`
+	TotalRefunded  float64 `json:"total_refunded"`
 }
 
 func (r *EscrowRepository) GetSummary(ctx context.Context) (*EscrowSummary, error) {
@@ -212,21 +310,21 @@ func (r *EscrowRepository) GetSummary(ctx context.Context) (*EscrowSummary, erro
 // EscrowOrderRow — one row for the admin "Escrow Payments" list: order + escrow + the two
 // parties' names joined in, so the screen doesn't need N extra profile lookups.
 type EscrowOrderRow struct {
-	OrderID          string     `json:"order_id"`
-	OrderNumber      string     `json:"order_number"`
-	ImporterID       string     `json:"importer_id"`
-	ImporterName     string     `json:"importer_name"`
-	ExporterID       string     `json:"exporter_id"`
-	ExporterName     string     `json:"exporter_name"`
-	OrderAmount      float64    `json:"order_amount"`
-	PayoutAmount     float64    `json:"payout_amount"`
-	OrderStatus      string     `json:"order_status"`
-	EscrowStatus     string     `json:"escrow_status"`
-	HasOpenDispute   bool       `json:"has_open_dispute"`
-	ReleaseDueAt     *time.Time `json:"release_due_at,omitempty"`
-	HeldAt           *time.Time `json:"held_at,omitempty"`
-	ReleasedAt       *time.Time `json:"released_at,omitempty"`
-	RefundedAt       *time.Time `json:"refunded_at,omitempty"`
+	OrderID        string     `json:"order_id"`
+	OrderNumber    string     `json:"order_number"`
+	ImporterID     string     `json:"importer_id"`
+	ImporterName   string     `json:"importer_name"`
+	ExporterID     string     `json:"exporter_id"`
+	ExporterName   string     `json:"exporter_name"`
+	OrderAmount    float64    `json:"order_amount"`
+	PayoutAmount   float64    `json:"payout_amount"`
+	OrderStatus    string     `json:"order_status"`
+	EscrowStatus   string     `json:"escrow_status"`
+	HasOpenDispute bool       `json:"has_open_dispute"`
+	ReleaseDueAt   *time.Time `json:"release_due_at,omitempty"`
+	HeldAt         *time.Time `json:"held_at,omitempty"`
+	ReleasedAt     *time.Time `json:"released_at,omitempty"`
+	RefundedAt     *time.Time `json:"refunded_at,omitempty"`
 }
 
 // ExporterEscrowTotals — the exporter's own escrow-side figures for their Wallet screen:
@@ -236,11 +334,17 @@ type ExporterEscrowTotals struct {
 	TotalReleased  float64 `json:"total_released"`
 }
 
+// BUG FIX (M-08): PendingRelease previously summed the GROSS e.amount (includes platform fee)
+// while TotalReleased summed the NET e.payout_amount, and neither subtracted refunded_amount —
+// an exporter would see "Pending Release ₹5,00,000" and then actually receive ₹4,90,000, a
+// discrepancy on every single order. PendingRelease now sums the net-of-fee, net-of-refund
+// payout_amount for still-held escrows (what the exporter will actually receive), and
+// TotalReleased subtracts any refunded_amount too (matches MarkReleased's own net-payout math).
 func (r *EscrowRepository) GetExporterTotals(ctx context.Context, exporterID string) (*ExporterEscrowTotals, error) {
 	t := &ExporterEscrowTotals{}
 	err := r.db.QueryRow(ctx, `SELECT
-		COALESCE(SUM(e.amount) FILTER (WHERE e.status IN ('held','on_hold')), 0),
-		COALESCE(SUM(e.payout_amount) FILTER (WHERE e.status = 'released'), 0)
+		COALESCE(SUM(GREATEST(e.payout_amount - e.refunded_amount, 0)) FILTER (WHERE e.status IN ('held','on_hold')), 0),
+		COALESCE(SUM(GREATEST(e.payout_amount - e.refunded_amount, 0)) FILTER (WHERE e.status = 'released'), 0)
 		FROM escrow_payments e JOIN orders o ON o.id = e.order_id
 		WHERE o.exporter_id = $1`, exporterID).Scan(&t.PendingRelease, &t.TotalReleased)
 	if err != nil {

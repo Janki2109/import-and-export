@@ -22,6 +22,16 @@ type Config struct {
 	PlatformUPIVPA       string
 	PlatformUPIPayeeName string
 
+	// Bank transfer (Journey 10) — an alternative to UPI for international/non-INR orders
+	// (or importers who prefer wire transfer). Same trust model as UPI: importer wires the
+	// money outside the app, then self-declares with a reference/UTR number via
+	// ConfirmBankTransfer — no gateway integration, same as the existing UPI flow.
+	PlatformBankAccountName   string
+	PlatformBankAccountNumber string
+	PlatformBankIFSC          string
+	PlatformBankSWIFT         string
+	PlatformBankName          string
+
 	PlatformFeePercent float64
 	AutoReleaseDays    int
 	// AutoReleaseGraceHours — hours after the admin-notified alert before the cron actually
@@ -49,6 +59,12 @@ type Config struct {
 	// LocalStorageRoot and serves files back via this server; "s3" uses the AWS config above.
 	// Changing providers is a config-only change — no code in any handler/service/frontend
 	// depends on which one is active.
+	// ClamAVAddr — Journey 11 "virus scanning": host:port of a running clamd daemon (e.g.
+	// "localhost:3310"). Empty = scanning stays disabled (pkg/scan.NoopScanner), same
+	// fail-open-but-honest default as before — uploads aren't blocked on a missing scanner,
+	// but nothing is ever falsely reported as "scanned clean" either.
+	ClamAVAddr string
+
 	StorageProvider      string // "local" | "s3"
 	LocalStorageRoot     string // filesystem root for local-provider uploads
 	StoragePublicBaseURL string // optional — override the scheme+host used to build local upload/download URLs; blank = derive from the incoming request's Host header (works automatically for LAN dev and behind a reverse proxy)
@@ -75,8 +91,14 @@ type Config struct {
 	// Razorpay Route (Contacts + Fund Accounts, created once on KYC approval so the user can
 	// later receive escrow-release payouts). Empty = KYC approval still works, Razorpay linkage
 	// is just skipped with a warning (dev/test environments without real Razorpay keys).
-	RazorpayKeyID     string
-	RazorpayKeySecret string
+	RazorpayKeyID         string
+	RazorpayKeySecret     string
+	RazorpayWebhookSecret string
+
+	// Stripe (Journey 10) — international/card payments alternative to UPI/bank transfer.
+	// Empty = Stripe payment intent creation is disabled (falls back to UPI/bank transfer only).
+	StripeSecretKey     string
+	StripeWebhookSecret string
 }
 
 // knownPlaceholderJWTSecret is the value shipped in .env.example / dev .env files. Every token
@@ -93,15 +115,36 @@ func Load() *Config {
 	env := getEnv("APP_ENV", "development")
 	jwtSecret := getEnv("JWT_SECRET", "")
 
-	// BUG FIX (C4/C5): previously an empty or placeholder JWT_SECRET was silently accepted,
-	// letting the server start (and stay running in production) with all issued tokens signed
-	// using a known/empty key. Fail fast in production; warn loudly in development so local
-	// setups without a real secret still run unchanged.
+	// SECURITY FIX (C-01): previously only failed hard when APP_ENV was the exact literal
+	// string "production" — "prod", "Production", "staging" etc. all booted with an empty or
+	// placeholder JWT_SECRET and just logged a warning. With a known/empty HMAC key an attacker
+	// can self-sign an admin token and ParseToken will accept it. Now fails hard in ANY
+	// environment except "development"/"test" (an explicit, narrow allowlist for local/CI use),
+	// so no accidentally-mislabeled deployment can boot insecurely.
 	if jwtSecret == "" || jwtSecret == knownPlaceholderJWTSecret {
-		if env == "production" {
-			log.Fatal("FATAL: JWT_SECRET is empty or still set to the default placeholder value — refusing to start in production. Set JWT_SECRET to a long random secret.")
+		if env != "development" && env != "test" {
+			log.Fatal("FATAL: JWT_SECRET is empty or still set to the default placeholder value — refusing to start outside development/test. Set JWT_SECRET to a long random secret.")
 		}
 		log.Println("WARNING: JWT_SECRET is empty or still the default placeholder value. This is insecure — set a real JWT_SECRET before deploying to production.")
+	}
+
+	// SECURITY FIX (H-01): SignedURLSecret previously silently defaulted to JWTSecret when unset
+	// — besides violating key separation, if JWTSecret was ALSO empty/placeholder (dev only, per
+	// the check above) anyone could forge a valid ?token= for any stored document. Require a
+	// distinct, non-empty secret outside development/test; fall back to a derived-but-still-set
+	// value only for local dev convenience.
+	signedURLSecret := getEnv("SIGNED_URL_SECRET", "")
+	if signedURLSecret == "" {
+		if env != "development" && env != "test" {
+			log.Fatal("FATAL: SIGNED_URL_SECRET is empty — refusing to start outside development/test. Set a distinct, random SIGNED_URL_SECRET (must not equal JWT_SECRET).")
+		}
+		log.Println("WARNING: SIGNED_URL_SECRET is empty; falling back to JWT_SECRET for local development only. Set a distinct SIGNED_URL_SECRET before deploying.")
+		signedURLSecret = jwtSecret
+	} else if signedURLSecret == jwtSecret {
+		if env != "development" && env != "test" {
+			log.Fatal("FATAL: SIGNED_URL_SECRET must not equal JWT_SECRET — refusing to start outside development/test.")
+		}
+		log.Println("WARNING: SIGNED_URL_SECRET is the same as JWT_SECRET. This violates key separation — set a distinct value before deploying.")
 	}
 
 	return &Config{
@@ -114,6 +157,12 @@ func Load() *Config {
 
 		PlatformUPIVPA:       getEnv("PLATFORM_UPI_VPA", "placeholder@upi"),
 		PlatformUPIPayeeName: getEnv("PLATFORM_UPI_PAYEE_NAME", "One Bharat Export Import"),
+
+		PlatformBankAccountName:   getEnv("PLATFORM_BANK_ACCOUNT_NAME", ""),
+		PlatformBankAccountNumber: getEnv("PLATFORM_BANK_ACCOUNT_NUMBER", ""),
+		PlatformBankIFSC:          getEnv("PLATFORM_BANK_IFSC", ""),
+		PlatformBankSWIFT:         getEnv("PLATFORM_BANK_SWIFT", ""),
+		PlatformBankName:          getEnv("PLATFORM_BANK_NAME", ""),
 
 		PlatformFeePercent:    getEnvFloat("PLATFORM_FEE_PERCENT", 2.0),
 		AutoReleaseDays:       getEnvInt("AUTO_RELEASE_DAYS", 3),
@@ -134,6 +183,8 @@ func Load() *Config {
 		AWSS3Endpoint:  getEnv("AWS_S3_ENDPOINT", ""),
 		AWSS3PublicURL: getEnv("AWS_S3_PUBLIC_URL", ""),
 
+		ClamAVAddr: getEnv("CLAMAV_ADDR", ""),
+
 		StorageProvider:      getEnv("STORAGE_PROVIDER", "local"),
 		LocalStorageRoot:     getEnv("LOCAL_STORAGE_ROOT", "./storage/uploads"),
 		StoragePublicBaseURL: getEnv("STORAGE_PUBLIC_BASE_URL", ""),
@@ -149,13 +200,17 @@ func Load() *Config {
 		AdminBootstrapName:     getEnv("ADMIN_BOOTSTRAP_NAME", "Platform Admin"),
 
 		DocumentEncryptionKey:   getEnv("DOCUMENT_ENCRYPTION_KEY", ""),
-		SignedURLSecret:         getEnv("SIGNED_URL_SECRET", jwtSecret),
+		SignedURLSecret:         signedURLSecret,
 		MaxFailedLoginAttempts:  getEnvInt("MAX_FAILED_LOGIN_ATTEMPTS", 5),
 		LoginLockoutWindowMin:   getEnvInt("LOGIN_LOCKOUT_WINDOW_MIN", 15),
 		LoginLockoutDurationMin: getEnvInt("LOGIN_LOCKOUT_DURATION_MIN", 15),
 
-		RazorpayKeyID:     getEnv("RAZORPAY_KEY_ID", ""),
-		RazorpayKeySecret: getEnv("RAZORPAY_KEY_SECRET", ""),
+		RazorpayKeyID:         getEnv("RAZORPAY_KEY_ID", ""),
+		RazorpayKeySecret:     getEnv("RAZORPAY_KEY_SECRET", ""),
+		RazorpayWebhookSecret: getEnv("RAZORPAY_WEBHOOK_SECRET", ""),
+
+		StripeSecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
+		StripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
 	}
 }
 

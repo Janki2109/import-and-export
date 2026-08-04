@@ -23,6 +23,12 @@ class _AdsScreenState extends State<AdsScreen> with SingleTickerProviderStateMix
     _mineFuture = _adService.listMine();
   }
 
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   Future<void> _createAd() async {
     final titleCtrl = TextEditingController();
     final imageCtrl = TextEditingController();

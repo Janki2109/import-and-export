@@ -42,7 +42,7 @@ class ApiClient {
         requestHeader: false,
         responseHeader: false,
         request: true,
-        requestBody: true,
+        requestBody: false,
         responseBody: true,
         logPrint: (obj) => debugPrint('[Dio] $obj'),
       ));
@@ -51,7 +51,7 @@ class ApiClient {
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await _storage.read(key: AppConstants.tokenKey);
-        if (token != null) {
+        if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
         options.headers['X-Device-Id'] = await DeviceIdentity.get();
@@ -59,10 +59,12 @@ class ApiClient {
       },
       onError: (DioException e, handler) async {
         final isAuthEndpoint = e.requestOptions.path.contains('/auth/');
-        if (e.response?.statusCode == 401 && !isAuthEndpoint) {
+        final alreadyRetried = e.requestOptions.extra['__retried'] == true;
+        if (e.response?.statusCode == 401 && !isAuthEndpoint && !alreadyRetried) {
           final refreshed = await _refreshAccessToken();
           if (refreshed) {
             try {
+              e.requestOptions.extra['__retried'] = true;
               final retryResponse = await _retry(e.requestOptions);
               handler.resolve(retryResponse);
               return;
@@ -72,6 +74,8 @@ class ApiClient {
           } else {
             onSessionExpired?.call();
           }
+        } else if (e.response?.statusCode == 401 && alreadyRetried) {
+          onSessionExpired?.call();
         }
 
         if (kDebugMode) {
@@ -166,10 +170,13 @@ class ApiClient {
 
   Future<Response> _retry(RequestOptions requestOptions) async {
     final token = await _storage.read(key: AppConstants.tokenKey);
-    final options = Options(method: requestOptions.method, headers: {
-      ...requestOptions.headers,
-      'Authorization': 'Bearer $token',
-    });
+    final headers = {...requestOptions.headers};
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    } else {
+      headers.remove('Authorization');
+    }
+    final options = Options(method: requestOptions.method, headers: headers);
     return dio.request(
       requestOptions.path,
       data: requestOptions.data,
@@ -186,6 +193,9 @@ class ApiClient {
 
   Future<Response> put(String path, {dynamic data}) =>
       dio.put(path, data: data).catchError(_rethrow);
+
+  Future<Response> delete(String path, {dynamic data}) =>
+      dio.delete(path, data: data).catchError(_rethrow);
 
   Never _rethrow(Object e) {
     if (e is DioException && e.error is ApiException) {

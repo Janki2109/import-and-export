@@ -8,6 +8,10 @@ package razorpay
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,4 +141,21 @@ func (c *Client) CreateBankFundAccount(ctx context.Context, contactID, accountHo
 		return nil, err
 	}
 	return &out, nil
+}
+
+// VerifyWebhookSignature — Journey 10 "webhook verification". Razorpay signs every webhook
+// delivery with HMAC-SHA256 of the raw request body, keyed by the webhook secret configured in
+// the Razorpay dashboard (RAZORPAY_WEBHOOK_SECRET), sent in the X-Razorpay-Signature header as
+// a hex digest. This must be verified BEFORE trusting or acting on any webhook payload — an
+// unverified webhook is just an anonymous POST anyone on the internet could send, which is why
+// this is a hard prerequisite for actually running an escrow/payment webhook handler, not
+// something to skip "for now".
+func VerifyWebhookSignature(payload []byte, signatureHeader, webhookSecret string) bool {
+	if webhookSecret == "" || signatureHeader == "" {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(webhookSecret))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(signatureHeader)) == 1
 }

@@ -294,6 +294,38 @@ class FraudSignal {
       );
 }
 
+/// Journey 12 — a persisted security flag from the fraud sweep, reviewable/resolvable over
+/// time (unlike FraudSignal, which is recomputed fresh on every request and never stored).
+class SecurityFlag {
+  final String id;
+  final String? userId;
+  final String rule;
+  final String severity;
+  final String description;
+  final bool resolved;
+  final DateTime createdAt;
+
+  SecurityFlag({
+    required this.id,
+    this.userId,
+    required this.rule,
+    required this.severity,
+    required this.description,
+    required this.resolved,
+    required this.createdAt,
+  });
+
+  factory SecurityFlag.fromJson(Map<String, dynamic> json) => SecurityFlag(
+        id: json['id'],
+        userId: json['user_id'],
+        rule: json['rule'],
+        severity: json['severity'],
+        description: json['description'],
+        resolved: json['resolved'] ?? false,
+        createdAt: DateTime.parse(json['created_at']),
+      );
+}
+
 /// One row in the admin "Escrow Payments" list — order + escrow status + both parties'
 /// names, already joined server-side.
 class EscrowOrderRow {

@@ -63,6 +63,8 @@ class ChatService {
 /// if [isConnected] is false when they need to send.
 class ChatSocket {
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _subscription;
+  bool _connected = false;
   final _storage = const FlutterSecureStorage();
   final _incoming = StreamController<ChatMessage>.broadcast();
   // Journey 8 — typing indicator / online status: (conversationId, userId) for typing,
@@ -71,20 +73,38 @@ class ChatSocket {
   final _typing = StreamController<Map<String, String>>.broadcast();
   final _presence = StreamController<Map<String, dynamic>>.broadcast();
   final _readReceipts = StreamController<String>.broadcast();
+  final _errors = StreamController<String>.broadcast();
 
   Stream<ChatMessage> get messages => _incoming.stream;
   Stream<Map<String, String>> get typingEvents => _typing.stream;
   Stream<Map<String, dynamic>> get presenceEvents => _presence.stream;
   /// Emits the conversation_id whose messages the other participant just read.
   Stream<String> get readReceipts => _readReceipts.stream;
-  bool get isConnected => _channel != null;
+  /// Emits error messages surfaced by the backend over the socket (type == 'error'), e.g.
+  /// a rejected send — so callers can fall back to REST or show feedback.
+  Stream<String> get errorStream => _errors.stream;
+  /// True only once the WebSocket connection is actually established (channel created and
+  /// not yet closed/errored) — not merely "connect() was called".
+  bool get isConnected => _connected && _channel != null;
 
   Future<void> connect() async {
     final token = await _storage.read(key: AppConstants.tokenKey);
     if (token == null) return;
 
-    _channel = WebSocketChannel.connect(Uri.parse('${AppConstants.chatWsUrl}?token=$token'));
-    _channel!.stream.listen(
+    final channel = WebSocketChannel.connect(Uri.parse('${AppConstants.chatWsUrl}?token=$token'));
+    _channel = channel;
+    try {
+      // `ready` completes once the WebSocket handshake has actually succeeded; it throws if
+      // the connection fails outright, so isConnected never reports true for a dead socket.
+      await channel.ready;
+      _connected = true;
+    } catch (_) {
+      _connected = false;
+      _channel = null;
+      return;
+    }
+
+    _subscription = channel.stream.listen(
       (raw) {
         try {
           final decoded = jsonDecode(raw as String) as Map<String, dynamic>;
@@ -107,13 +127,22 @@ class ChatSocket {
             case 'read':
               _readReceipts.add(decoded['conversation_id'] as String? ?? '');
               break;
+            case 'error':
+              _errors.add(decoded['message'] as String? ?? decoded['error'] as String? ?? 'Unknown chat error');
+              break;
           }
         } catch (_) {
           // ignore malformed frames
         }
       },
-      onDone: () => _channel = null,
-      onError: (_) => _channel = null,
+      onDone: () {
+        _connected = false;
+        _channel = null;
+      },
+      onError: (_) {
+        _connected = false;
+        _channel = null;
+      },
       cancelOnError: true,
     );
   }
@@ -141,10 +170,13 @@ class ChatSocket {
   }
 
   void dispose() {
+    _subscription?.cancel();
+    _connected = false;
     _channel?.sink.close();
     _incoming.close();
     _typing.close();
     _presence.close();
     _readReceipts.close();
+    _errors.close();
   }
 }

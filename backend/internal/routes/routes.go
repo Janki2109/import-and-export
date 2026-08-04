@@ -37,6 +37,7 @@ type Handlers struct {
 	Negotiation   *handlers.NegotiationHandler
 	PaymentTerms  *handlers.PaymentTermsHandler
 	Security      *handlers.SecurityHandler
+	Webhook       *handlers.WebhookHandler
 }
 
 func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey middleware.APIKeyValidator) {
@@ -48,6 +49,16 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 	})
 
 	api := r.Group("/api/v1")
+
+	// ---- Payment gateway webhooks (Journey 10) ----
+	// Unauthenticated by JWT — trust comes entirely from verifying the gateway's signature on
+	// the raw body inside each handler, before anything in the payload is acted on.
+	webhookRateLimiter := middleware.NewRateLimiter(60, time.Minute)
+	webhooks := api.Group("/webhooks", webhookRateLimiter.Middleware())
+	{
+		webhooks.POST("/razorpay", h.Webhook.Razorpay)
+		webhooks.POST("/stripe", h.Webhook.Stripe)
+	}
 
 	// ---- Public auth routes ----
 	// Rate limited per-IP: login/register are the classic brute-force / spam-signup targets.
@@ -88,6 +99,9 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			orders.GET("", h.Order.ListMyOrders)
 			orders.POST("", middleware.RequireRole("importer"), h.Order.CreateOrder)
 			orders.POST("/confirm-payment", middleware.RequireRole("importer"), h.Order.ConfirmPayment)
+			orders.POST("/confirm-bank-transfer", middleware.RequireRole("importer"), h.Order.ConfirmBankTransfer)
+			orders.GET("/bank-transfer-details", h.Order.GetBankTransferDetails)
+			orders.POST("/stripe-payment-intent", middleware.RequireRole("importer"), h.Order.CreateStripePaymentIntent)
 			orders.POST("/confirm-delivery", middleware.RequireRole("importer"), h.Order.ConfirmDelivery)
 			orders.GET("/:id/escrow", h.Order.GetEscrowStatus)
 			orders.GET("/:id/compliance", h.Compliance.GetForOrder)
@@ -196,6 +210,8 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 		{
 			documents.POST("/generate", middleware.RequireRole("exporter", "importer", "logistics"), h.Document.Generate)
 			documents.GET("/by-order/:order_id", h.Document.ListForOrder)
+			documents.GET("/:id/versions", h.Document.ListVersions)
+			documents.DELETE("/:id", h.Document.Delete)
 		}
 
 		search := protected.Group("/search")
@@ -274,8 +290,11 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			admin.POST("/escrow/release/:id", h.Admin.ReleasePayment)
 			admin.POST("/escrow/hold/:id", h.Admin.HoldPayment)
 			admin.POST("/escrow/refund/:id", h.Admin.RefundPayment)
+			admin.POST("/escrow/refund-partial/:id", h.Admin.RefundPartial)
 			admin.GET("/escrow/history/:id", h.Admin.GetEscrowHistory)
 			admin.GET("/fraud-signals", h.Admin.GetFraudSignals)
+			admin.GET("/security-flags", h.Admin.ListSecurityFlags)
+			admin.POST("/security-flags/resolve/:id", h.Admin.ResolveSecurityFlag)
 			admin.POST("/products/:id/moderate", h.Admin.ModerateProduct)
 			admin.POST("/hs-codes", h.Admin.CreateHSCode)
 			admin.DELETE("/hs-codes/:id", h.Admin.DeleteHSCode)
@@ -308,6 +327,7 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			users.GET("/me", h.Profile.GetProfile)
 			users.PUT("/me", h.Profile.UpdateProfile)
 			users.POST("/me/change-password", h.Profile.ChangePassword)
+			users.POST("/me/chat-public-key", h.Profile.SetChatPublicKey)
 			users.GET("/public/:id", h.Profile.GetPublicProfile)
 		}
 

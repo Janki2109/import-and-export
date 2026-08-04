@@ -17,6 +17,14 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _profileService = ProfileService();
   bool _saving = false;
 
+  @override
+  void dispose() {
+    _currentCtrl.dispose();
+    _newCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
@@ -56,7 +64,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   controller: _newCtrl,
                   obscureText: true,
                   decoration: const InputDecoration(labelText: 'New Password', prefixIcon: Icon(Icons.lock_reset_outlined)),
-                  validator: (v) => (v == null || v.length < 8) ? 'At least 8 characters' : null,
+                  validator: (v) {
+                    if (v == null || v.length < 8) return 'At least 8 characters';
+                    if (!RegExp(r'[A-Za-z]').hasMatch(v)) return 'Must contain at least one letter';
+                    if (!RegExp(r'[0-9]').hasMatch(v)) return 'Must contain at least one number';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 14),
                 TextFormField(

@@ -22,14 +22,48 @@ type FraudService struct {
 	rfqRepo          *repository.RFQRepository
 	quotationRepo    *repository.QuotationRepository
 	flagRepo         *repository.SecurityFlagRepository
+	auditRepo        *repository.AuditLogRepository
 	notification     *NotificationService
 }
 
-func NewFraudService(loginAttemptRepo *repository.LoginAttemptRepository, orderRepo *repository.OrderRepository, userRepo *repository.UserRepository, disputeRepo *repository.DisputeRepository, rfqRepo *repository.RFQRepository, quotationRepo *repository.QuotationRepository, flagRepo *repository.SecurityFlagRepository, notification *NotificationService) *FraudService {
+func NewFraudService(loginAttemptRepo *repository.LoginAttemptRepository, orderRepo *repository.OrderRepository, userRepo *repository.UserRepository, disputeRepo *repository.DisputeRepository, rfqRepo *repository.RFQRepository, quotationRepo *repository.QuotationRepository, flagRepo *repository.SecurityFlagRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService) *FraudService {
 	return &FraudService{
 		loginAttemptRepo: loginAttemptRepo, orderRepo: orderRepo, userRepo: userRepo, disputeRepo: disputeRepo,
-		rfqRepo: rfqRepo, quotationRepo: quotationRepo, flagRepo: flagRepo, notification: notification,
+		rfqRepo: rfqRepo, quotationRepo: quotationRepo, flagRepo: flagRepo, auditRepo: auditRepo, notification: notification,
 	}
+}
+
+// ListFlags — Journey 12 "security flags": the persisted findings from Sweep(), reviewable
+// over time (unlike GetSignals, which is recomputed fresh on every call and never stored).
+func (s *FraudService) ListFlags(ctx context.Context, resolved *bool, limit int) ([]repository.SecurityFlag, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	return s.flagRepo.List(ctx, resolved, limit)
+}
+
+// ResolveFlag — Journey 12 "resolve fraud": marks a persisted flag resolved, optionally
+// warning the flagged user first. Account suspension itself is deliberately NOT duplicated
+// here — that's the existing admin Users screen's SetUserActive/BlockUser action, so there's
+// one place, not two, that can deactivate an account.
+func (s *FraudService) ResolveFlag(ctx context.Context, flagID, adminID, action, notes string) error {
+	flag, err := s.flagRepo.GetByID(ctx, flagID)
+	if err != nil {
+		return fmt.Errorf("flag not found: %w", err)
+	}
+	if action == "warn" && flag.UserID != nil {
+		msg := "Our platform detected unusual activity on your account"
+		if notes != "" {
+			msg += ": " + notes
+		}
+		_ = s.notification.Send(ctx, *flag.UserID, "Security Notice", msg, "security", nil)
+	}
+
+	if err := s.flagRepo.Resolve(ctx, flagID); err != nil {
+		return fmt.Errorf("resolve flag: %w", err)
+	}
+	_ = s.auditRepo.Record(ctx, adminID, "security_flag.resolve", "security_flag", flagID, map[string]interface{}{"action": action, "notes": notes})
+	return nil
 }
 
 const (

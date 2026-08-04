@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -9,7 +10,9 @@ import '../../models/chat.dart';
 import '../../models/trade.dart';
 import '../../models/user.dart';
 import '../../providers/providers.dart';
+import '../../services/chat_e2e_service.dart';
 import '../../services/chat_service.dart';
+import '../../services/profile_service.dart';
 import '../../services/trade_service.dart';
 import '../../services/upload_service.dart';
 
@@ -28,6 +31,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _chatService = ChatService();
   final _tradeService = TradeService();
   final _uploadService = UploadService();
+  final _profileService = ProfileService();
+  final _e2e = ChatE2EService();
   final _socket = ChatSocket();
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
@@ -40,6 +45,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _otherTyping = false;
   bool _otherOnline = false;
   DateTime? _lastTypingSent;
+  // Journey 11 — end-to-end encryption. Null if the other participant hasn't published a
+  // public key yet, or otherUserId wasn't passed to this screen — falls back to plaintext
+  // (still protected by the server's own AES-256-GCM-at-rest layer) rather than breaking chat.
+  String? _otherPublicKey;
+
+  StreamSubscription<ChatMessage>? _messagesSub;
+  StreamSubscription<Map<String, String>>? _typingSub;
+  StreamSubscription<Map<String, dynamic>>? _presenceSub;
+  StreamSubscription<String>? _readReceiptsSub;
 
   @override
   void initState() {
@@ -57,10 +71,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// Journey 11 — decrypts a message's content in place if E2E is available for this
+  /// conversation; returns it unchanged otherwise (plaintext, or a message from before E2E was
+  /// enabled — ChatE2EService.decrypt itself falls back to null on failure, so we keep the
+  /// original in that case rather than showing nothing).
+  Future<ChatMessage> _decryptIfNeeded(ChatMessage msg) async {
+    if (_otherPublicKey == null || msg.content == null) return msg;
+    final decrypted = await _e2e.decrypt(msg.content!, _otherPublicKey!);
+    if (decrypted == null) return msg;
+    return msg.copyWithContent(decrypted);
+  }
+
   Future<void> _init() async {
+    // Journey 11 — end-to-end encryption setup: generate/load this device's keypair, then
+    // fetch the other participant's public key (if we know who they are) to derive the shared
+    // secret. Both best-effort — chat still works unencrypted-beyond-server-at-rest if either
+    // step fails or isn't available.
+    try {
+      await _e2e.ensureKeyPair();
+      if (widget.otherUserId != null) {
+        final otherProfile = await _profileService.getPublicProfile(widget.otherUserId!);
+        _otherPublicKey = otherProfile.chatPublicKey;
+      }
+    } catch (_) {
+      _otherPublicKey = null;
+    }
+
     try {
       final history = await _chatService.listMessages(widget.conversationId);
-      if (mounted) setState(() => _messages.addAll(history));
+      final decrypted = await Future.wait(history.map(_decryptIfNeeded));
+      if (mounted) setState(() => _messages.addAll(decrypted));
       await _chatService.markRead(widget.conversationId);
     } catch (_) {
     } finally {
@@ -68,9 +108,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
 
     await _socket.connect();
-    _socket.messages.listen((msg) {
+    _messagesSub = _socket.messages.listen((msg) async {
       if (msg.conversationId == widget.conversationId && mounted) {
-        setState(() => _messages.add(msg));
+        final decrypted = await _decryptIfNeeded(msg);
+        if (!mounted) return;
+        setState(() => _messages.add(decrypted));
         _scrollToBottom();
         // A new incoming message while this screen is open counts as read immediately.
         if (msg.senderId != ref.read(authProvider).currentUser?.id) {
@@ -78,7 +120,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
       }
     });
-    _socket.typingEvents.listen((event) {
+    _typingSub = _socket.typingEvents.listen((event) {
       if (event['conversation_id'] == widget.conversationId && mounted) {
         setState(() => _otherTyping = true);
         Future.delayed(const Duration(seconds: 3), () {
@@ -87,13 +129,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     });
     if (widget.otherUserId != null) {
-      _socket.presenceEvents.listen((event) {
+      _presenceSub = _socket.presenceEvents.listen((event) {
         if (event['user_id'] == widget.otherUserId && mounted) {
           setState(() => _otherOnline = event['online'] as bool? ?? false);
         }
       });
     }
-    _socket.readReceipts.listen((conversationId) {
+    _readReceiptsSub = _socket.readReceipts.listen((conversationId) {
       if (conversationId == widget.conversationId && mounted) {
         final myId = ref.read(authProvider).currentUser?.id;
         setState(() {
@@ -105,6 +147,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
       }
     });
+  }
+
+  /// Journey 11 — encrypts outgoing text before it leaves the device, if E2E is available for
+  /// this conversation; returns it unchanged otherwise (still protected by the server's own
+  /// AES-256-GCM-at-rest layer, just not end-to-end).
+  Future<String> _encryptIfNeeded(String content) async {
+    if (_otherPublicKey == null) return content;
+    try {
+      return await _e2e.encrypt(content, _otherPublicKey!);
+    } catch (_) {
+      return content;
+    }
   }
 
   void _scrollToBottom() {
@@ -119,15 +173,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty) return;
     _inputCtrl.clear();
+    final encrypted = await _encryptIfNeeded(text);
 
     if (_socket.isConnected) {
-      _socket.send(conversationId: widget.conversationId, type: 'text', content: text);
+      _socket.send(conversationId: widget.conversationId, type: 'text', content: encrypted);
       // Optimistic local echo — the real persisted copy arrives back over the socket too,
       // but showing it immediately keeps the UI feeling instant.
     } else {
       try {
-        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'text', content: text);
-        if (mounted) setState(() => _messages.add(msg));
+        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'text', content: encrypted);
+        // The server echoes back exactly what was sent (ciphertext, if E2E is active) — show
+        // the plaintext we already have locally instead of round-tripping a decrypt.
+        if (mounted) setState(() => _messages.add(msg.copyWithContent(text)));
         _scrollToBottom();
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
@@ -156,18 +213,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       );
       if (picked == null) return;
+      const label = 'Shared a quotation';
+      final encrypted = await _encryptIfNeeded(label);
 
       if (_socket.isConnected) {
-        _socket.send(conversationId: widget.conversationId, type: 'quotation', quotationId: picked.id, content: 'Shared a quotation');
+        _socket.send(conversationId: widget.conversationId, type: 'quotation', quotationId: picked.id, content: encrypted);
       } else {
-        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'quotation', quotationId: picked.id, content: 'Shared a quotation');
-        if (mounted) setState(() => _messages.add(msg));
+        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'quotation', quotationId: picked.id, content: encrypted);
+        if (mounted) setState(() => _messages.add(msg.copyWithContent(label)));
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
     }
   }
 
+  // ATTACHMENT E2E STATUS (security hardening pass): access control for attachments is fully
+  // enforced server-side — ChatService.ListMessages only resolves/returns a fresh signed URL
+  // for participants of the conversation (see ChatService.resolveAttachmentURL), so an
+  // attachment URL can never be obtained by a non-participant. Payload confidentiality (true
+  // end-to-end encryption of the file bytes themselves, matching what `content` already gets
+  // via ChatE2EService.encrypt/decrypt) is NOT yet wired into this screen. The primitives exist
+  // and are real (ChatE2EService.encryptBytes/decryptBytes, same X25519+AES-256-GCM as text) —
+  // what's left to fully close this gap:
+  //   1. Here, before uploadFile(): read the picked file's bytes, call
+  //      `await _e2e.encryptBytes(bytes, _otherPublicKey!)`, and upload the encrypted bytes
+  //      instead of the plaintext file (content-type would become application/octet-stream).
+  //   2. On receive (_MessageBubble/_VoicePlayer below): download the ciphertext bytes instead
+  //      of pointing Image.network/UrlSource at the URL directly, call `_e2e.decryptBytes(...)`,
+  //      then render via Image.memory (photos) or write to a temp file and hand that path to
+  //      the audio player (voice notes) — neither widget can decrypt a network stream on the fly.
+  //   3. Falls back gracefully today: until (1)/(2) land, attachments are protected by
+  //      access-control + transport TLS + at-rest encryption (server-side AES-256-GCM), but are
+  //      not end-to-end confidential the way text content is.
   Future<void> _shareDocumentLink() async {
     final ctrl = TextEditingController();
     final url = await showDialog<String>(
@@ -185,13 +262,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
     );
     if (url == null || url.isEmpty) return;
+    const label = 'Shared a document';
+    final encrypted = await _encryptIfNeeded(label);
 
     if (_socket.isConnected) {
-      _socket.send(conversationId: widget.conversationId, type: 'document', fileUrl: url, content: 'Shared a document');
+      _socket.send(conversationId: widget.conversationId, type: 'document', fileUrl: url, content: encrypted);
     } else {
       try {
-        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'document', fileUrl: url, content: 'Shared a document');
-        if (mounted) setState(() => _messages.add(msg));
+        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'document', fileUrl: url, content: encrypted);
+        if (mounted) setState(() => _messages.add(msg.copyWithContent(label)));
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
       }
@@ -221,11 +300,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() => _uploadingVoice = true);
     try {
       final fileUrl = await _uploadService.uploadFile(category: 'chat', file: File(path), contentType: 'audio/mp4');
+      const label = 'Voice note';
+      final encrypted = await _encryptIfNeeded(label);
       if (_socket.isConnected) {
-        _socket.send(conversationId: widget.conversationId, type: 'voice', fileUrl: fileUrl, content: 'Voice note');
+        _socket.send(conversationId: widget.conversationId, type: 'voice', fileUrl: fileUrl, content: encrypted);
       } else {
-        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'voice', fileUrl: fileUrl, content: 'Voice note');
-        if (mounted) setState(() => _messages.add(msg));
+        final msg = await _chatService.sendMessageRest(conversationId: widget.conversationId, type: 'voice', fileUrl: fileUrl, content: encrypted);
+        if (mounted) setState(() => _messages.add(msg.copyWithContent(label)));
       }
       _scrollToBottom();
     } catch (e) {
@@ -238,8 +319,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void dispose() {
     _inputCtrl.removeListener(_onInputChanged);
+    _messagesSub?.cancel();
+    _typingSub?.cancel();
+    _presenceSub?.cancel();
+    _readReceiptsSub?.cancel();
     _socket.dispose();
     _recorder.dispose();
+    _inputCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -251,6 +338,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.otherUserName),
+        actions: [
+          if (_otherPublicKey != null)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: Tooltip(
+                message: 'End-to-end encrypted',
+                child: Icon(Icons.lock_outline, size: 18),
+              ),
+            ),
+        ],
         bottom: widget.otherUserId == null
             ? null
             : PreferredSize(

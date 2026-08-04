@@ -38,6 +38,12 @@ class _GSTRatesScreenState extends State<GSTRatesScreen> {
     _future = _load();
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<List<_GSTSlab>> _load() async {
     final results = await Future.wait([
       _searchService.listGSTRates(),

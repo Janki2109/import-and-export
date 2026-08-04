@@ -16,8 +16,10 @@ import (
 	"github.com/jayashri-infotech/onebharat-backend/pkg/database"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/fcm"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/razorpay"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/scan"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/security"
 	"github.com/jayashri-infotech/onebharat-backend/pkg/storage"
+	"github.com/jayashri-infotech/onebharat-backend/pkg/stripe"
 )
 
 func main() {
@@ -92,6 +94,14 @@ func main() {
 	documentAccessLogRepo := repository.NewDocumentAccessLogRepository(db)
 
 	// Services
+	signedURLSigner := security.NewSignedURLSigner(cfg.SignedURLSecret)
+	// Journey 11 "virus scanning": real ClamAV integration when CLAMAV_ADDR is set; otherwise
+	// falls back to the honest NoopScanner (reports "not_scanned", never falsely "clean").
+	var virusScanner scan.Scanner = scan.NoopScanner{}
+	if cfg.ClamAVAddr != "" {
+		virusScanner = scan.NewClamAVScanner(cfg.ClamAVAddr)
+	}
+	documentSecurityService := services.NewDocumentSecurityService(storageService, signedURLSigner, documentAccessLogRepo, virusScanner)
 	notificationService := services.NewNotificationService(notificationRepo, deviceTokenRepo, userRepo, fcmClient)
 	authService := services.NewAuthService(userRepo, refreshTokenRepo, loginAttemptRepo, userDeviceRepo, notificationService, cfg)
 	if cfg.AdminBootstrapEmail != "" && cfg.AdminBootstrapPassword != "" {
@@ -99,17 +109,17 @@ func main() {
 			log.Printf("⚠️  admin bootstrap failed: %v", err)
 		}
 	}
-	complianceService := services.NewComplianceService(complianceRepo, orderRepo, companyRepo, shipmentRepo, notificationService)
-	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, cfg, notificationService, complianceService)
+	complianceService := services.NewComplianceService(complianceRepo, orderRepo, companyRepo, shipmentRepo, notificationService, documentSecurityService)
+	stripeClient := stripe.NewClient(cfg.StripeSecretKey)
+	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, paymentTermsRepo, cfg, notificationService, complianceService, stripeClient)
 	negotiationService := services.NewNegotiationService(negotiationRepo, rfqRepo, quotationRepo, auditLogRepo, notificationService)
-	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, auditLogRepo, notificationService)
+	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, auditLogRepo, notificationService, documentSecurityService)
 	razorpayClient := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)
-	kycService := services.NewKYCService(kycRepo, userRepo, auditLogRepo, notificationService, razorpayClient)
+	kycService := services.NewKYCService(kycRepo, userRepo, auditLogRepo, notificationService, razorpayClient, documentSecurityService)
 	shipmentService := services.NewShipmentService(shipmentRepo, orderRepo, complianceService, notificationService)
 	rfqService := services.NewRFQService(rfqRepo, userRepo, notificationService)
 	quotationService := services.NewQuotationService(quotationRepo, rfqRepo, orderService, notificationService)
 	walletService := services.NewWalletService(walletRepo, userRepo, escrowRepo, kycRepo, notificationService)
-	documentService := services.NewDocumentService(documentRepo, orderRepo, userRepo, shipmentRepo)
 	searchService := services.NewSearchService(referenceRepo)
 	aiSearchService := services.NewAISearchService(referenceRepo, cfg)
 	chatHub := services.NewChatHub()
@@ -126,8 +136,8 @@ func main() {
 	} else {
 		log.Println("⚠️  DOCUMENT_ENCRYPTION_KEY not set — chat messages will be stored in plaintext")
 	}
-	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher)
-	uploadService := services.NewUploadService(storageService)
+	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher, documentSecurityService)
+	uploadService := services.NewUploadService(storageService, documentSecurityService)
 	disputeService := services.NewDisputeService(disputeRepo, orderRepo, escrowRepo, userRepo, auditLogRepo, orderService, notificationService)
 	fleetService := services.NewFleetService(fleetRepo)
 	productService := services.NewProductService(productRepo)
@@ -137,12 +147,11 @@ func main() {
 	companyService := services.NewCompanyService(companyRepo, productRepo, orderRepo, ratingRepo)
 	profileService := services.NewProfileService(userRepo)
 	adminService := services.NewAdminService(adminRepo, referenceRepo, productRepo, escrowRepo, auditLogRepo, settingsRepo, userRepo, chatRepo, orderService, notificationService, chatCipher)
-	fraudService := services.NewFraudService(loginAttemptRepo, orderRepo, userRepo, disputeRepo, rfqRepo, quotationRepo, securityFlagRepo, notificationService)
+	fraudService := services.NewFraudService(loginAttemptRepo, orderRepo, userRepo, disputeRepo, rfqRepo, quotationRepo, securityFlagRepo, auditLogRepo, notificationService)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo, membershipRepo)
 	directoryService := services.NewDirectoryService(directoryRepo)
 	securityService := services.NewSecurityService(userRepo, loginAttemptRepo, userDeviceRepo, documentAccessLogRepo, refreshTokenRepo)
-	signedURLSigner := security.NewSignedURLSigner(cfg.SignedURLSecret)
-	documentSecurityService := services.NewDocumentSecurityService(storageService, signedURLSigner, documentAccessLogRepo)
+	documentService := services.NewDocumentService(documentRepo, orderRepo, userRepo, shipmentRepo, storageService, documentSecurityService, cfg.SignedURLSecret)
 
 	// Handlers
 	h := &routes.Handlers{
@@ -157,7 +166,7 @@ func main() {
 		Document:      handlers.NewDocumentHandler(documentService),
 		Search:        handlers.NewSearchHandler(searchService, aiSearchService),
 		Chat:          handlers.NewChatHandler(chatService, chatHub, cfg.JWTSecret),
-		Upload:        handlers.NewUploadHandler(uploadService, storageService),
+		Upload:        handlers.NewUploadHandler(uploadService, storageService, virusScanner),
 		Dispute:       handlers.NewDisputeHandler(disputeService),
 		Fleet:         handlers.NewFleetHandler(fleetService),
 		Product:       handlers.NewProductHandler(productService),
@@ -173,6 +182,7 @@ func main() {
 		Negotiation:   handlers.NewNegotiationHandler(negotiationService),
 		PaymentTerms:  handlers.NewPaymentTermsHandler(paymentTermsService),
 		Security:      handlers.NewSecurityHandler(securityService, documentSecurityService),
+		Webhook:       handlers.NewWebhookHandler(cfg, orderService),
 	}
 
 	if cfg.Env == "production" {
@@ -180,19 +190,18 @@ func main() {
 	}
 
 	r := gin.Default()
-	// KNOWN ISSUE (C6/C7, not fixed): these routes serve ./storage/documents and
-	// cfg.LocalStorageRoot with no authentication — anyone who guesses/enumerates a filename can
-	// download it, bypassing the separate signed-URL system (SecurityHandler.DownloadSecure)
-	// entirely. Gating this behind auth was tried and reverted: order_documents_screen.dart opens
-	// these URLs via launchUrl() in an external browser/app, which cannot attach an Authorization
-	// header, so requiring auth here 401s every existing "view document" link. A real fix needs a
-	// frontend change (route documents through the signed-URL flow instead) which is out of scope
-	// under the "do not change UI/flow" constraint — flagged for the user to address deliberately.
-	r.Static("/files/documents", "./storage/documents")
-	// Serves files stored by the local storage provider (STORAGE_PROVIDER=local). Under S3,
-	// GeneratePublicUrl never returns a path under /files/uploads, so this route is simply
-	// unused — no code needs to know which provider is active.
-	r.Static("/files/uploads", cfg.LocalStorageRoot)
+	// SECURITY FIX (previously C6/C7, "known issue, not fixed"): both unauthenticated static
+	// routes (`/files/documents`, `/files/uploads`) have been REMOVED. They previously served
+	// ./storage/documents and cfg.LocalStorageRoot to anyone who guessed/enumerated a filename,
+	// no login required. All file access now goes through the signed-URL system
+	// (SecurityHandler.DownloadSecure / DocumentSecurityService), which works fine with
+	// launchUrl()'s external-browser opens (the auth proof is a query-string token, not an
+	// Authorization header) — the earlier blocker for gating this route no longer applies now
+	// that every upload category (KYC/POD/chat/compliance/profile/milestone-proof), not just
+	// trade documents, issues signed URLs (see UploadService.PresignUpload) and every read path
+	// re-signs stored references fresh (see DocumentSecurityService.ResolveStoredValue), which
+	// also transparently upgrades any already-stored legacy `/files/uploads/<key>` value found
+	// in the database to a signed URL — so removing the route doesn't strand old data either.
 	r.StaticFile("/docs/openapi.yaml", "./docs/openapi.yaml")
 	r.GET("/docs", func(c *gin.Context) {
 		c.Data(200, "text/html; charset=utf-8", []byte(swaggerUIPage))

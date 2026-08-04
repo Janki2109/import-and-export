@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/config"
@@ -36,6 +38,10 @@ type RegisterInput struct {
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*models.User, error) {
+	// BUG FIX (L-05): email uniqueness was case-sensitive end-to-end — "User@x.com" and
+	// "user@x.com" could register as two distinct accounts. Normalize to lowercase before any
+	// lookup/storage so uniqueness and login are both case-insensitive.
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	existing, err := s.userRepo.GetByEmail(ctx, in.Email)
 	if err != nil {
 		return nil, err
@@ -82,6 +88,7 @@ type TokenPair struct {
 // tracking, and a "new device" security notification. None of this changes what the client
 // sends or receives, so the existing Flutter login flow needs zero changes.
 func (s *AuthService) Login(ctx context.Context, email, password string, meta security.RequestMeta) (*models.User, *TokenPair, error) {
+	email = strings.ToLower(strings.TrimSpace(email)) // BUG FIX (L-05): case-insensitive email
 	maxAttempts := s.cfg.MaxFailedLoginAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 5
@@ -90,14 +97,44 @@ func (s *AuthService) Login(ctx context.Context, email, password string, meta se
 	if windowMin <= 0 {
 		windowMin = 15
 	}
-	if failures, err := s.loginAttemptRepo.CountRecentFailures(ctx, email, windowMin); err == nil && failures >= maxAttempts {
-		return nil, nil, fmt.Errorf("too many failed login attempts — please try again in %d minutes", windowMin)
+	// BUG FIX (M-04): LoginLockoutDurationMin was loaded from config but never actually read —
+	// an operator setting WINDOW=5/DURATION=60 expecting a 1-hour lockout got 5 minutes in
+	// practice. durationMin is now the window actually enforced once the account is locked
+	// (how long a user must wait), while windowMin remains the detection window used to decide
+	// whether the account IS locked (how far back failures are counted to hit the threshold).
+	durationMin := s.cfg.LoginLockoutDurationMin
+	if durationMin <= 0 {
+		durationMin = windowMin
+	}
+	// SECURITY FIX (M-01): previously "err == nil && failures >= max" meant any DB error
+	// (connection blip, timeout, pool exhaustion) silently DISABLED the lockout — precisely
+	// under the load an attacker's brute-force generates. A count error is now itself treated
+	// as a reason to refuse the login rather than fail open.
+	failures, cerr := s.loginAttemptRepo.CountRecentFailures(ctx, email, windowMin)
+	if cerr != nil {
+		return nil, nil, fmt.Errorf("unable to verify login attempt history, please try again")
+	}
+	if failures >= maxAttempts {
+		// Once over threshold, the account stays locked until no failures remain inside the
+		// (longer-or-equal) duration window — i.e. re-check against durationMin, not windowMin.
+		lockedFailures, derr := s.loginAttemptRepo.CountRecentFailures(ctx, email, durationMin)
+		if derr != nil {
+			return nil, nil, fmt.Errorf("unable to verify login attempt history, please try again")
+		}
+		if lockedFailures >= maxAttempts {
+			return nil, nil, fmt.Errorf("too many failed login attempts — please try again in %d minutes", durationMin)
+		}
 	}
 
 	record := func(userID *string, success bool) {
-		_ = s.loginAttemptRepo.RecordWithMeta(ctx, email, success, repository.LoginAttemptMeta{
+		// SECURITY FIX (M-02): previously this error was silently discarded — if the insert
+		// ever failed, CountRecentFailures above would always read 0 and brute-force lockout
+		// would be unenforceable, with zero log signal that anything was wrong.
+		if err := s.loginAttemptRepo.RecordWithMeta(ctx, email, success, repository.LoginAttemptMeta{
 			UserID: userID, IP: meta.IP, DeviceID: meta.DeviceID, UserAgent: meta.UserAgent, Country: meta.Country,
-		})
+		}); err != nil {
+			log.Printf("auth: failed to record login attempt for %s: %v", email, err)
+		}
 	}
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
@@ -108,9 +145,12 @@ func (s *AuthService) Login(ctx context.Context, email, password string, meta se
 		record(nil, false)
 		return nil, nil, fmt.Errorf("invalid email or password")
 	}
+	// BUG FIX (L-06): previously returned a distinct "account is deactivated" error, letting an
+	// attacker enumerate which emails are registered (and deactivated) vs. simply unknown. Now
+	// returns the same generic message as an unknown email / wrong password.
 	if !user.IsActive {
 		record(&user.ID, false)
-		return nil, nil, fmt.Errorf("account is deactivated, contact support")
+		return nil, nil, fmt.Errorf("invalid email or password")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
@@ -139,11 +179,24 @@ func (s *AuthService) Login(ctx context.Context, email, password string, meta se
 // access+refresh pair is issued. Rotation limits the damage if a refresh token ever leaks.
 func (s *AuthService) RefreshTokens(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	hash := utils.HashToken(refreshToken)
-	userID, err := s.refreshTokenRepo.GetValidByHash(ctx, hash)
+
+	// SECURITY FIX (H-05): rotation is now atomic — RevokeIfValid's UPDATE ... WHERE revoked =
+	// false ... RETURNING is itself the check-and-gate, so two concurrent /auth/refresh calls
+	// presenting the same token can no longer both read "still valid" before either write lands.
+	// Previously GetValidByHash and RevokeByHash were two separate statements with no lock,
+	// letting a stolen token be replayed in parallel with the victim's own refresh.
+	userID, err := s.refreshTokenRepo.RevokeIfValid(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
 	if userID == "" {
+		// SECURITY FIX (M-03): reuse detection. If this hash WAS issued but is now
+		// revoked/expired, presenting it again is the canonical signal of token theft (the
+		// legitimate owner already rotated past it) — revoke every other session for this user
+		// so the attacker's independently-rotating chain is killed too.
+		if reuseUserID, existed, werr := s.refreshTokenRepo.WasIssued(ctx, hash); werr == nil && existed {
+			_ = s.refreshTokenRepo.RevokeAllForUser(ctx, reuseUserID)
+		}
 		return nil, fmt.Errorf("invalid or expired refresh token")
 	}
 
@@ -153,10 +206,6 @@ func (s *AuthService) RefreshTokens(ctx context.Context, refreshToken string) (*
 	}
 	if !user.IsActive {
 		return nil, fmt.Errorf("account is deactivated, contact support")
-	}
-
-	if err := s.refreshTokenRepo.RevokeByHash(ctx, hash); err != nil {
-		return nil, fmt.Errorf("revoke old refresh token: %w", err)
 	}
 
 	return s.issueTokenPair(ctx, user)
@@ -196,11 +245,20 @@ func (s *AuthService) LogoutAllDevices(ctx context.Context, userID string) error
 // already exist. There's still no admin *registration* route (admins are never
 // self-signup) — this env-config bootstrap is the only way an admin account gets created.
 func (s *AuthService) BootstrapAdmin(ctx context.Context, email, password, fullName string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
 	existing, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return err
 	}
 	if existing != nil {
+		// BUG FIX (L-07): previously silently no-opped here even when the existing account was
+		// NOT an admin (e.g. someone self-registered with the bootstrap email first) — startup
+		// logged success, no admin was ever created, and every admin route became permanently
+		// unreachable with no diagnostic. Now logs loudly so the operator can act (promote the
+		// account manually or change ADMIN_BOOTSTRAP_EMAIL).
+		if existing.Role != models.RoleAdmin {
+			log.Printf("WARNING: ADMIN_BOOTSTRAP_EMAIL (%s) is already registered as a non-admin account — no admin account was created. Promote it manually or change ADMIN_BOOTSTRAP_EMAIL.", email)
+		}
 		return nil // already bootstrapped
 	}
 

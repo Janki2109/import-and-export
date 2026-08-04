@@ -85,16 +85,34 @@ GoRouter buildRouter(AuthProvider auth) {
       }
 
       // authenticated
-      final isAdmin = auth.currentUser!.role == UserRole.admin;
-      final companyDone = isAdmin || (auth.companyExists ?? false);
-      // BUG FIX (Journey 2 — KYC gate): previously gated only on a KYC row existing
-      // (auth.kycSubmitted), so a pending or rejected user passed straight through to the
-      // dashboard after submitting once. Now requires actual admin approval ('verified').
-      final kycDone = isAdmin || (auth.kycStatus == 'verified');
+      final user = auth.currentUser;
+      if (user == null) {
+        // Shouldn't happen while status == authenticated, but guard rather than force-unwrap
+        // and dead-end navigation if state is ever inconsistent.
+        return loc == '/login' ? null : '/login';
+      }
+      final isAdmin = user.role == UserRole.admin;
 
+      // companyExists/kycStatus are null until refreshOnboardingStatus() resolves — that means
+      // "not checked yet", not "false". Redirecting on null would bounce the user to
+      // create-company/kyc-onboarding prematurely; instead stay put (splash/current route)
+      // until the real value is known.
+      if (!isAdmin && auth.companyExists == null) {
+        return null;
+      }
+      final companyDone = isAdmin || (auth.companyExists == true);
       if (!companyDone) {
         return loc == '/create-company' ? null : '/create-company';
       }
+
+      // BUG FIX (Journey 2 — KYC gate): previously gated only on a KYC row existing
+      // (auth.kycSubmitted), so a pending or rejected user passed straight through to the
+      // dashboard after submitting once. Now requires actual admin approval ('verified').
+      if (!isAdmin && auth.kycStatus == null && auth.kycSubmitted == null) {
+        // Not checked yet — wait rather than treating as "not done".
+        return null;
+      }
+      final kycDone = isAdmin || (auth.kycStatus == 'verified');
       if (!kycDone) {
         return loc == '/kyc-onboarding' ? null : '/kyc-onboarding';
       }
@@ -102,12 +120,12 @@ GoRouter buildRouter(AuthProvider auth) {
       // First-time app guide — additive, role-specific, never shown to admin. Only gates
       // navigation once per user (AppGuidePrefs, local SharedPreferences flag); reopening it
       // later via Settings' "View App Guide" is a plain Navigator.push, not this redirect.
-      final needsAppGuide = !isAdmin && !AppGuidePrefs.hasSeen(auth.currentUser!.id);
+      final needsAppGuide = !isAdmin && !AppGuidePrefs.hasSeen(user.id);
       if (needsAppGuide) {
         return loc == '/app-guide' ? null : '/app-guide';
       }
 
-      final target = dashboardPathForRole(auth.currentUser!.role);
+      final target = dashboardPathForRole(user.role);
       if (_onboardingGatePaths.contains(loc) || loc == '/app-guide') {
         return target;
       }

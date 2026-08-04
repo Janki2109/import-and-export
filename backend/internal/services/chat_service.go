@@ -17,10 +17,24 @@ type ChatService struct {
 	shipmentRepo *repository.ShipmentRepository
 	hub          *ChatHub
 	cipher       *security.AESCipher // nil = encryption not configured (dev/test only)
+	docSecurity  *DocumentSecurityService
 }
 
-func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, orderRepo *repository.OrderRepository, shipmentRepo *repository.ShipmentRepository, hub *ChatHub, cipher *security.AESCipher) *ChatService {
-	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, orderRepo: orderRepo, shipmentRepo: shipmentRepo, hub: hub, cipher: cipher}
+func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, orderRepo *repository.OrderRepository, shipmentRepo *repository.ShipmentRepository, hub *ChatHub, cipher *security.AESCipher, docSecurity *DocumentSecurityService) *ChatService {
+	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, orderRepo: orderRepo, shipmentRepo: shipmentRepo, hub: hub, cipher: cipher, docSecurity: docSecurity}
+}
+
+// resolveAttachmentURL — security hardening: chat file/voice attachments are re-signed fresh
+// on every read, same as KYC docs (see DocumentSecurityService.ResolveStoredValue) — access
+// control is enforced by ListMessages/SendMessage already requiring the caller to be a
+// conversation participant before this is ever reached, so wrapping the URL here doesn't need
+// its own separate ownership check.
+func (s *ChatService) resolveAttachmentURL(fileURL *string, baseURL string) *string {
+	if fileURL == nil || *fileURL == "" || s.docSecurity == nil {
+		return fileURL
+	}
+	resolved := s.docSecurity.ResolveStoredValue(*fileURL, baseURL)
+	return &resolved
 }
 
 // Journey 8 — "messages encrypted": content is AES-256-GCM encrypted before it ever reaches
@@ -237,7 +251,7 @@ func (s *ChatService) GetConversationForParticipant(ctx context.Context, convers
 	return conv, nil
 }
 
-func (s *ChatService) ListMessages(ctx context.Context, conversationID, requesterID string) ([]models.Message, error) {
+func (s *ChatService) ListMessages(ctx context.Context, conversationID, requesterID, baseURL string) ([]models.Message, error) {
 	conv, err := s.chatRepo.GetConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
@@ -251,22 +265,34 @@ func (s *ChatService) ListMessages(ctx context.Context, conversationID, requeste
 	}
 	for i := range messages {
 		messages[i].Content = s.decryptContent(messages[i].Content)
+		messages[i].FileURL = s.resolveAttachmentURL(messages[i].FileURL, baseURL)
 	}
 	return messages, nil
 }
 
 // MarkRead — Journey 8 "read receipts": also pushes a live "read" event to the other
 // participant (the original sender) so their UI can flip the tick without needing to reload.
+//
+// SECURITY FIX (document ownership validation): previously had no participant check at all —
+// any authenticated user could mark another party's messages as read in a conversation they
+// aren't part of (read-receipt spoofing / notification suppression), unlike every sibling
+// method in this file (SendMessage/ListMessages/GetConversationForParticipant), which all
+// verify participant membership first.
 func (s *ChatService) MarkRead(ctx context.Context, conversationID, readerID string) error {
+	conv, err := s.chatRepo.GetConversation(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	if readerID != conv.ParticipantOneID && readerID != conv.ParticipantTwoID {
+		return fmt.Errorf("not a participant in this conversation")
+	}
 	if err := s.chatRepo.MarkRead(ctx, conversationID, readerID); err != nil {
 		return err
 	}
-	if conv, err := s.chatRepo.GetConversation(ctx, conversationID); err == nil {
-		senderID := conv.ParticipantOneID
-		if senderID == readerID {
-			senderID = conv.ParticipantTwoID
-		}
-		s.hub.SendToUser(senderID, map[string]interface{}{"type": "read", "conversation_id": conversationID})
+	senderID := conv.ParticipantOneID
+	if senderID == readerID {
+		senderID = conv.ParticipantTwoID
 	}
+	s.hub.SendToUser(senderID, map[string]interface{}{"type": "read", "conversation_id": conversationID})
 	return nil
 }

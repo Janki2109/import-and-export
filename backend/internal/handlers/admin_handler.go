@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
@@ -18,12 +19,27 @@ func NewAdminHandler(adminService *services.AdminService, fraudService *services
 	return &AdminHandler{adminService: adminService, fraudService: fraudService}
 }
 
+// Journey 12 "pagination": shared query-param parsing for admin list endpoints. Defaults match
+// each endpoint's previous hardcoded values so behavior is unchanged when no params are given.
+func paginationParams(c *gin.Context, defaultLimit int) (limit, offset int) {
+	limit = defaultLimit
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+	offset = 0
+	if o, err := strconv.Atoi(c.Query("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+	return limit, offset
+}
+
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	var role *string
 	if r := c.Query("role"); r != "" {
 		role = &r
 	}
-	users, err := h.adminService.ListUsers(c.Request.Context(), role)
+	limit, offset := paginationParams(c, 100)
+	users, err := h.adminService.ListUsers(c.Request.Context(), role, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -36,7 +52,8 @@ func (h *AdminHandler) ListUsersRich(c *gin.Context) {
 	if r := c.Query("role"); r != "" {
 		role = &r
 	}
-	users, err := h.adminService.ListUsersRich(c.Request.Context(), role)
+	limit, offset := paginationParams(c, 300)
+	users, err := h.adminService.ListUsersRich(c.Request.Context(), role, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -75,7 +92,8 @@ func (h *AdminHandler) ListOrders(c *gin.Context) {
 	if st := c.Query("status"); st != "" {
 		status = &st
 	}
-	orders, err := h.adminService.ListOrders(c.Request.Context(), status)
+	limit, offset := paginationParams(c, 100)
+	orders, err := h.adminService.ListOrders(c.Request.Context(), status, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -88,7 +106,8 @@ func (h *AdminHandler) ListOrdersRich(c *gin.Context) {
 	if st := c.Query("status"); st != "" {
 		status = &st
 	}
-	orders, err := h.adminService.ListOrdersRich(c.Request.Context(), status)
+	limit, offset := paginationParams(c, 300)
+	orders, err := h.adminService.ListOrdersRich(c.Request.Context(), status, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -192,7 +211,12 @@ func (h *AdminHandler) DeleteRFQ(c *gin.Context) {
 // ---------------- Shipment Management (admin-wide, read-only) ----------------
 
 func (h *AdminHandler) ListAllShipments(c *gin.Context) {
-	shipments, err := h.adminService.ListShipments(c.Request.Context())
+	var status *string
+	if st := c.Query("status"); st != "" {
+		status = &st
+	}
+	limit, offset := paginationParams(c, 200)
+	shipments, err := h.adminService.ListShipments(c.Request.Context(), status, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -207,7 +231,8 @@ func (h *AdminHandler) ListEscrowOrders(c *gin.Context) {
 	if st := c.Query("status"); st != "" {
 		status = &st
 	}
-	rows, err := h.adminService.ListEscrowOrders(c.Request.Context(), status)
+	limit, offset := paginationParams(c, 100)
+	rows, err := h.adminService.ListEscrowOrders(c.Request.Context(), status, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -260,6 +285,26 @@ func (h *AdminHandler) RefundPayment(c *gin.Context) {
 	response.Success(c, http.StatusOK, gin.H{"message": "payment refunded to importer"})
 }
 
+type refundPartialRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+	Reason string  `json:"reason" binding:"required"`
+}
+
+// RefundPartial — Journey 10 "partial refund".
+func (h *AdminHandler) RefundPartial(c *gin.Context) {
+	adminID := c.GetString("user_id")
+	var req refundPartialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.adminService.RefundPartial(c.Request.Context(), c.Param("id"), adminID, req.Amount, req.Reason); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "partial refund issued to importer"})
+}
+
 // GetEscrowHistory — audit trail for one order's escrow lifecycle.
 func (h *AdminHandler) GetEscrowHistory(c *gin.Context) {
 	logs, err := h.adminService.GetEscrowHistory(c.Request.Context(), c.Param("id"))
@@ -277,6 +322,43 @@ func (h *AdminHandler) GetFraudSignals(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, signals)
+}
+
+// ListSecurityFlags — Journey 12 "security flags": the persisted findings from the fraud
+// sweep, reviewable over time (unlike GetFraudSignals, recomputed fresh every call).
+func (h *AdminHandler) ListSecurityFlags(c *gin.Context) {
+	var resolved *bool
+	if r := c.Query("resolved"); r != "" {
+		v := r == "true"
+		resolved = &v
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	flags, err := h.fraudService.ListFlags(c.Request.Context(), resolved, limit)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, flags)
+}
+
+type resolveSecurityFlagRequest struct {
+	Action string `json:"action" binding:"required,oneof=dismiss warn"`
+	Notes  string `json:"notes"`
+}
+
+// ResolveSecurityFlag — Journey 12 "resolve fraud".
+func (h *AdminHandler) ResolveSecurityFlag(c *gin.Context) {
+	adminID := c.GetString("user_id")
+	var req resolveSecurityFlagRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.fraudService.ResolveFlag(c.Request.Context(), c.Param("id"), adminID, req.Action, req.Notes); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "security flag resolved"})
 }
 
 type moderateProductRequest struct {

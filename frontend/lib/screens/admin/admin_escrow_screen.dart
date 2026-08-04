@@ -76,12 +76,31 @@ class _AdminEscrowScreenState extends State<AdminEscrowScreen> {
         ],
       ),
     );
-    if (confirmed != true || reasonCtrl.text.trim().isEmpty) return;
-    await _runAction(() => _adminService.refundEscrowPayment(row.orderId, reasonCtrl.text.trim()), 'Payment refunded to importer');
+    if (confirmed != true) {
+      reasonCtrl.dispose();
+      return;
+    }
+    if (reasonCtrl.text.trim().isEmpty) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a reason for the refund'), backgroundColor: AppColors.error));
+      reasonCtrl.dispose();
+      return;
+    }
+    final reason = reasonCtrl.text.trim();
+    reasonCtrl.dispose();
+    await _runAction(() => _adminService.refundEscrowPayment(row.orderId, reason), 'Payment refunded to importer');
   }
 
   Future<void> _showHistory(EscrowOrderRow row) async {
-    final history = await _adminService.getEscrowHistory(row.orderId);
+    setState(() => _busy = true);
+    List<dynamic> history;
+    try {
+      history = await _adminService.getEscrowHistory(row.orderId);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
@@ -282,7 +301,7 @@ class _EscrowCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(child: Text(row.orderNumber, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
-                IconButton(icon: const Icon(Icons.history, size: 20), tooltip: 'Escrow History', onPressed: onHistory, visualDensity: VisualDensity.compact),
+                IconButton(icon: const Icon(Icons.history, size: 20), tooltip: 'Escrow History', onPressed: busy ? null : onHistory, visualDensity: VisualDensity.compact),
                 StatusBadge(status: row.escrowStatus),
               ],
             ),

@@ -8,10 +8,19 @@ import '../core/constants/app_constants.dart';
 /// Generic CSV/PDF table export shared by every Admin Panel management screen (Users,
 /// Orders, Quotations, ...). CSV opens correctly in Excel/Sheets, so it covers both the
 /// "Export Excel" and "Export CSV" asks without a binary .xlsx dependency.
+/// Escapes a single CSV field per RFC 4180: wraps the value in double quotes if it
+/// contains a comma, double quote, or newline, doubling any embedded double quotes.
+String csvEscapeField(String value) {
+  if (value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
+    return '"${value.replaceAll('"', '""')}"';
+  }
+  return value;
+}
+
 String buildAdminCsv(List<String> headers, List<List<String>> rows) {
-  final buffer = StringBuffer('${headers.join(',')}\n');
+  final buffer = StringBuffer('${headers.map(csvEscapeField).join(',')}\n');
   for (final row in rows) {
-    buffer.writeln(row.map((c) => c.replaceAll(',', ';')).join(','));
+    buffer.writeln(row.map(csvEscapeField).join(','));
   }
   return buffer.toString();
 }

@@ -55,9 +55,14 @@ class _AdminKYCReviewScreenState extends State<AdminKYCReviewScreen> {
         ],
       ),
     );
-    if (confirmed != true || reasonCtrl.text.trim().isEmpty) return;
+    if (confirmed != true || reasonCtrl.text.trim().isEmpty) {
+      reasonCtrl.dispose();
+      return;
+    }
+    final reason = reasonCtrl.text.trim();
+    reasonCtrl.dispose();
     try {
-      await _adminService.rejectKYC(userId, reasonCtrl.text.trim());
+      await _adminService.rejectKYC(userId, reason);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('KYC rejected — the user has been notified.'), backgroundColor: AppColors.warning),

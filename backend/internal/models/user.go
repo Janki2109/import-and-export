@@ -34,6 +34,7 @@ type User struct {
 	IsPhoneVerified       bool      `json:"is_phone_verified" db:"is_phone_verified"`
 	RazorpayContactID     *string   `json:"-" db:"razorpay_contact_id"`
 	RazorpayFundAccountID *string   `json:"-" db:"razorpay_fund_account_id"`
+	ChatPublicKey         *string   `json:"chat_public_key,omitempty" db:"chat_public_key"`
 	CreatedAt             time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at" db:"updated_at"`
 }

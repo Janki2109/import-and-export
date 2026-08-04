@@ -41,6 +41,18 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
     _loadStatus();
   }
 
+  @override
+  void dispose() {
+    _panNumberCtrl.dispose();
+    _gstNumberCtrl.dispose();
+    _iecCodeCtrl.dispose();
+    _businessLicenseCtrl.dispose();
+    _bankAccountHolderNameCtrl.dispose();
+    _bankAccountNumberCtrl.dispose();
+    _bankIfscCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadStatus() async {
     try {
       final status = await _kycService.getMyStatus();
@@ -152,13 +164,40 @@ class _KYCForm extends StatefulWidget {
 
 class _KYCFormState extends State<_KYCForm> {
   final Map<String, String?> _docUrls = {'pan': null, 'gst': null, 'iec': null, 'address': null};
+  final _formKey = GlobalKey<FormState>();
+
+  static final _panRegex = RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$');
+  static final _gstRegex = RegExp(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$');
+  static final _ifscRegex = RegExp(r'^[A-Z]{4}0[A-Z0-9]{6}$');
+
+  bool get _hasAnyDocument {
+    final hasFresh = _docUrls.values.any((v) => v != null);
+    final hasExisting = (widget.status?['pan_doc_url'] != null) ||
+        (widget.status?['gst_doc_url'] != null) ||
+        (widget.status?['iec_doc_url'] != null) ||
+        (widget.status?['address_doc_url'] != null);
+    return hasFresh || hasExisting;
+  }
+
+  void _handleSubmit() {
+    if (!_formKey.currentState!.validate()) return;
+    if (!_hasAnyDocument) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload at least one document.'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
+    widget.onSubmit(_docUrls);
+  }
 
   @override
   Widget build(BuildContext context) {
     final status = widget.status?['status'] as String?;
     final isVerified = status == 'verified';
 
-    return Column(
+    return Form(
+      key: _formKey,
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _StatusBanner(status: status, rejectionReason: widget.status?['rejection_reason']),
@@ -170,7 +209,9 @@ class _KYCFormState extends State<_KYCForm> {
             TextFormField(
               controller: widget.panNumberCtrl,
               enabled: !isVerified,
+              textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(labelText: 'PAN Number', prefixIcon: Icon(Icons.badge_outlined)),
+              validator: (v) => (v == null || v.trim().isEmpty || !_panRegex.hasMatch(v.trim())) ? 'Enter a valid PAN (e.g. ABCDE1234F)' : null,
             ),
             const SizedBox(height: 10),
             _DocPicker(
@@ -189,7 +230,9 @@ class _KYCFormState extends State<_KYCForm> {
             TextFormField(
               controller: widget.gstNumberCtrl,
               enabled: !isVerified,
+              textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(labelText: 'GST Number', prefixIcon: Icon(Icons.receipt_long_outlined)),
+              validator: (v) => (v == null || v.trim().isEmpty || !_gstRegex.hasMatch(v.trim())) ? 'Enter a valid GST number' : null,
             ),
             const SizedBox(height: 10),
             _DocPicker(
@@ -209,6 +252,7 @@ class _KYCFormState extends State<_KYCForm> {
               controller: widget.iecCodeCtrl,
               enabled: !isVerified,
               decoration: const InputDecoration(labelText: 'IEC Code', prefixIcon: Icon(Icons.public_outlined)),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 10),
             _DocPicker(
@@ -247,6 +291,7 @@ class _KYCFormState extends State<_KYCForm> {
               controller: widget.bankAccountHolderNameCtrl,
               enabled: !isVerified,
               decoration: const InputDecoration(labelText: 'Account Holder Name', prefixIcon: Icon(Icons.person_outline)),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 10),
             TextFormField(
@@ -254,6 +299,7 @@ class _KYCFormState extends State<_KYCForm> {
               enabled: !isVerified,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Account Number', prefixIcon: Icon(Icons.account_balance_outlined)),
+              validator: (v) => (v == null || v.trim().isEmpty || !RegExp(r'^[0-9]{6,20}$').hasMatch(v.trim())) ? 'Enter a valid account number' : null,
             ),
             const SizedBox(height: 10),
             TextFormField(
@@ -261,18 +307,20 @@ class _KYCFormState extends State<_KYCForm> {
               enabled: !isVerified,
               textCapitalization: TextCapitalization.characters,
               decoration: const InputDecoration(labelText: 'IFSC Code', prefixIcon: Icon(Icons.pin_outlined)),
+              validator: (v) => (v == null || v.trim().isEmpty || !_ifscRegex.hasMatch(v.trim())) ? 'Enter a valid IFSC code' : null,
             ),
           ],
         ),
         const SizedBox(height: 28),
         if (!isVerified)
           ElevatedButton(
-            onPressed: widget.submitting ? null : () => widget.onSubmit(_docUrls),
+            onPressed: widget.submitting ? null : _handleSubmit,
             child: widget.submitting
                 ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : Text(status == null || status == 'pending' ? 'Submit KYC' : 'Resubmit KYC'),
           ),
       ],
+      ),
     );
   }
 }

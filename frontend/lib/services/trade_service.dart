@@ -117,4 +117,15 @@ class TradeService {
     final list = res.data['data'] as List? ?? [];
     return list.map((e) => TradeDocument.fromJson(e)).toList();
   }
+
+  /// Journey 9 — version history for one document.
+  Future<List<TradeDocumentVersion>> listDocumentVersions(String documentId) async {
+    final res = await _client.get('/documents/$documentId/versions');
+    final list = res.data['data'] as List? ?? [];
+    return list.map((e) => TradeDocumentVersion.fromJson(e)).toList();
+  }
+
+  Future<void> deleteDocument(String documentId) async {
+    await _client.delete('/documents/$documentId');
+  }
 }

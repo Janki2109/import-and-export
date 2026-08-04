@@ -78,9 +78,11 @@ func (h *PaymentTermsHandler) Setup(c *gin.Context) {
 
 // GetByOrder — GET /payment-terms/by-order/:orderId.
 func (h *PaymentTermsHandler) GetByOrder(c *gin.Context) {
-	terms, ms, err := h.svc.GetByOrderID(c.Request.Context(), c.Param("orderId"))
+	userID := c.GetString("user_id")
+	role := c.GetString("role")
+	terms, ms, err := h.svc.GetByOrderID(c.Request.Context(), c.Param("orderId"), userID, role, baseURL(c))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "payment terms not set up for this order")
+		response.Error(c, http.StatusForbidden, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, gin.H{"payment_terms": terms, "milestones": ms})

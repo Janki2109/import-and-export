@@ -17,12 +17,14 @@ import (
 type PaymentTermsService struct {
 	repo         *repository.PaymentTermsRepository
 	orderRepo    *repository.OrderRepository
+	escrowRepo   *repository.EscrowRepository
 	auditRepo    *repository.AuditLogRepository
 	notification *NotificationService
+	docSecurity  *DocumentSecurityService
 }
 
-func NewPaymentTermsService(repo *repository.PaymentTermsRepository, orderRepo *repository.OrderRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService) *PaymentTermsService {
-	return &PaymentTermsService{repo: repo, orderRepo: orderRepo, auditRepo: auditRepo, notification: notification}
+func NewPaymentTermsService(repo *repository.PaymentTermsRepository, orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, notification *NotificationService, docSecurity *DocumentSecurityService) *PaymentTermsService {
+	return &PaymentTermsService{repo: repo, orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, notification: notification, docSecurity: docSecurity}
 }
 
 type MilestoneInput struct {
@@ -86,6 +88,17 @@ func (s *PaymentTermsService) Setup(ctx context.Context, actorID, actorRole stri
 		return existing, ms, nil
 	}
 
+	// LOGIC FIX (C-03): if the order's single-payment escrow has already progressed past
+	// 'created' (i.e. the importer already paid via UPI/bank-transfer/gateway and it's held,
+	// released, refunded or on hold), a milestone schedule must not also be set up for it — the
+	// two release paths independently credit the exporter with nothing keeping them mutually
+	// exclusive, which previously allowed the exporter to be paid twice for one payment.
+	if s.escrowRepo != nil {
+		if escrow, err := s.escrowRepo.GetByOrderID(ctx, in.OrderID); err == nil && escrow != nil && escrow.Status != models.PaymentCreated {
+			return nil, nil, fmt.Errorf("this order's payment is already in progress via single-payment escrow (status: %s) — milestone terms cannot be set up for it", escrow.Status)
+		}
+	}
+
 	milestones := in.Milestones
 	if len(milestones) == 0 {
 		milestones = defaultMilestones(in.PaymentModel, in.OpenAccountDays)
@@ -93,8 +106,14 @@ func (s *PaymentTermsService) Setup(ctx context.Context, actorID, actorRole stri
 	if len(milestones) == 0 {
 		return nil, nil, fmt.Errorf("at least one milestone is required for this payment model")
 	}
+	// LOGIC FIX (C-04): previously only the aggregate sum was checked (99.9-100.1 band), so
+	// e.g. [200%, -100%] summed to exactly 100 and passed, creating a milestone worth DOUBLE
+	// the order total. Each individual percentage must now be in (0, 100].
 	var total float64
 	for _, m := range milestones {
+		if m.Percentage <= 0 || m.Percentage > 100 {
+			return nil, nil, fmt.Errorf("milestone %q has an invalid percentage %.2f — each milestone must be > 0 and <= 100", m.Title, m.Percentage)
+		}
 		total += m.Percentage
 	}
 	if total < 99.9 || total > 100.1 {
@@ -152,7 +171,19 @@ func (s *PaymentTermsService) Setup(ctx context.Context, actorID, actorRole stri
 	return terms, created, nil
 }
 
-func (s *PaymentTermsService) GetByOrderID(ctx context.Context, orderID string) (*models.PaymentTerms, []models.PaymentMilestone, error) {
+// SECURITY FIX (document ownership validation): previously had no authorization check at all —
+// any authenticated user could view any order's payment terms, milestones, and proof-of-payment
+// URLs just by knowing/guessing an order ID. Now requires the requester to be that order's own
+// importer/exporter, or an admin.
+func (s *PaymentTermsService) GetByOrderID(ctx context.Context, orderID, requesterID, requesterRole, baseURL string) (*models.PaymentTerms, []models.PaymentMilestone, error) {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("order not found")
+	}
+	if requesterRole != "admin" && requesterID != order.ImporterID && requesterID != order.ExporterID {
+		return nil, nil, fmt.Errorf("not authorized to view this order's payment terms")
+	}
+
 	terms, err := s.repo.GetByOrderID(ctx, orderID)
 	if err != nil {
 		return nil, nil, err
@@ -160,6 +191,14 @@ func (s *PaymentTermsService) GetByOrderID(ctx context.Context, orderID string) 
 	ms, err := s.repo.ListMilestones(ctx, terms.ID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if s.docSecurity != nil {
+		for i := range ms {
+			if ms[i].ProofURL != nil && *ms[i].ProofURL != "" {
+				resolved := s.docSecurity.ResolveStoredValue(*ms[i].ProofURL, baseURL)
+				ms[i].ProofURL = &resolved
+			}
+		}
 	}
 	return terms, ms, nil
 }

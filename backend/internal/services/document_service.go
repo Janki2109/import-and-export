@@ -123,7 +123,15 @@ func (s *DocumentService) Generate(ctx context.Context, orderID string, docType 
 // SecurityHandler) is used to build a fresh signed download URL per document on every call
 // (Journey 9 "signed sharing") — URLs are never stored, so they can't go stale/leak a
 // permanent public path.
-func (s *DocumentService) ListForOrder(ctx context.Context, orderID, baseURL string) ([]models.Document, error) {
+// SECURITY FIX (document ownership validation): previously had no authorization check at
+// all — any authenticated user could list and download every generated trade document
+// (commercial invoice, packing list, bill of lading, etc.) for any order by knowing/guessing
+// an order_id. Now requires the requester to be that order's own importer/exporter, matching
+// the check ListVersions/Delete already had.
+func (s *DocumentService) ListForOrder(ctx context.Context, orderID, requesterID, baseURL string) ([]models.Document, error) {
+	if err := s.authorizeOrderAccess(ctx, orderID, requesterID); err != nil {
+		return nil, err
+	}
 	docs, err := s.docRepo.ListByOrder(ctx, orderID)
 	if err != nil {
 		return nil, err

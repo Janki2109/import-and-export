@@ -45,8 +45,10 @@ class PublicUser {
   final String? companyName;
   final String role;
   final String? avatarUrl;
+  // Journey 11 "end-to-end encrypted chat" — this user's published X25519 public key.
+  final String? chatPublicKey;
 
-  PublicUser({required this.id, required this.fullName, this.companyName, required this.role, this.avatarUrl});
+  PublicUser({required this.id, required this.fullName, this.companyName, required this.role, this.avatarUrl, this.chatPublicKey});
 
   factory PublicUser.fromJson(Map<String, dynamic> json) => PublicUser(
         id: json['id'],
@@ -54,5 +56,6 @@ class PublicUser {
         companyName: json['company_name'],
         role: json['role'],
         avatarUrl: json['avatar_url'],
+        chatPublicKey: json['chat_public_key'],
       );
 }

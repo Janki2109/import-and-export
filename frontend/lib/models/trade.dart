@@ -141,6 +141,9 @@ class TradeDocument {
   final String orderId;
   final String type;
   final String fileUrl;
+  final int version;
+  final String? checksum;
+  final String? signature;
   final DateTime createdAt;
 
   TradeDocument({
@@ -148,6 +151,9 @@ class TradeDocument {
     required this.orderId,
     required this.type,
     required this.fileUrl,
+    required this.version,
+    this.checksum,
+    this.signature,
     required this.createdAt,
   });
 
@@ -156,6 +162,40 @@ class TradeDocument {
         orderId: json['order_id'],
         type: json['type'],
         fileUrl: json['file_url'],
+        version: json['version'] ?? 1,
+        checksum: json['checksum'],
+        signature: json['signature'],
+        createdAt: DateTime.parse(json['created_at']),
+      );
+}
+
+/// Journey 9 — one entry in a document's version history.
+class TradeDocumentVersion {
+  final String id;
+  final String documentId;
+  final int version;
+  final String fileUrl;
+  final String checksum;
+  final String signature;
+  final DateTime createdAt;
+
+  TradeDocumentVersion({
+    required this.id,
+    required this.documentId,
+    required this.version,
+    required this.fileUrl,
+    required this.checksum,
+    required this.signature,
+    required this.createdAt,
+  });
+
+  factory TradeDocumentVersion.fromJson(Map<String, dynamic> json) => TradeDocumentVersion(
+        id: json['id'],
+        documentId: json['document_id'],
+        version: json['version'],
+        fileUrl: json['file_url'],
+        checksum: json['checksum'],
+        signature: json['signature'],
         createdAt: DateTime.parse(json['created_at']),
       );
 }

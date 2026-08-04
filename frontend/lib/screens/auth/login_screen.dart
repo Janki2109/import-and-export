@@ -7,6 +7,7 @@ import '../../providers/providers.dart';
 import 'auth_visuals.dart';
 
 const _rememberedEmailKey = 'remembered_login_email';
+final _emailRegex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$');
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -168,7 +169,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
                                       controller: _emailCtrl,
                                       keyboardType: TextInputType.emailAddress,
                                       decoration: authFieldDecoration(label: 'Email', icon: Icons.email_outlined),
-                                      validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
+                                      validator: (v) => (v == null || !_emailRegex.hasMatch(v)) ? 'Enter a valid email' : null,
                                     ),
                                     const SizedBox(height: 14),
                                     TextFormField(

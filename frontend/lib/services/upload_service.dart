@@ -10,7 +10,11 @@ import '../core/network/api_client.dart';
 /// Authorization/JWT header or it'll be rejected by S3's signature check.
 class UploadService {
   final ApiClient _client = ApiClient();
-  final Dio _rawDio = Dio();
+  final Dio _rawDio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 30),
+    sendTimeout: const Duration(seconds: 120),
+    receiveTimeout: const Duration(seconds: 60),
+  ));
 
   Future<String> uploadFile({
     required String category, // 'kyc' | 'pod' | 'chat' | 'profile'

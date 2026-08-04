@@ -28,7 +28,7 @@ class _PODUploadScreenState extends State<PODUploadScreen> {
 
   Future<void> _pickPhoto() async {
     final picked = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85);
-    if (picked != null) setState(() => _photo = File(picked.path));
+    if (picked != null && mounted) setState(() => _photo = File(picked.path));
   }
 
   Future<void> _submit() async {
@@ -39,6 +39,7 @@ class _PODUploadScreenState extends State<PODUploadScreen> {
     setState(() => _uploading = true);
     try {
       final fileUrl = await _uploadService.uploadFile(category: 'pod', file: _photo!, contentType: 'image/jpeg');
+      if (!mounted) return;
       setState(() {
         _uploading = false;
         _submitting = true;

@@ -40,6 +40,18 @@ class _FreightCalculatorScreenState extends State<FreightCalculatorScreen> {
   bool _saving = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _weightCtrl.dispose();
+    _lengthCtrl.dispose();
+    _widthCtrl.dispose();
+    _heightCtrl.dispose();
+    _packagesCtrl.dispose();
+    _originCtrl.dispose();
+    _destinationCtrl.dispose();
+    super.dispose();
+  }
+
   // The estimate itself is untouched — same SearchService.calculateFreight() call, same
   // mode/weight/dimensions params, as before. Only the result presentation is redesigned.
   Future<void> _calculate() async {

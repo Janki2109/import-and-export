@@ -10,9 +10,17 @@ const _deviceIdKey = 'security_device_id';
 /// login-history features (Security Dashboard) have something to key off.
 class DeviceIdentity {
   static String? _cached;
+  static Future<String>? _inFlight;
 
   static Future<String> get() async {
     if (_cached != null) return _cached!;
+    // Guard against concurrent callers each racing to generate/persist their own device id
+    // (e.g. several API calls fired at startup before the first `get()` resolves) — everyone
+    // awaits the same in-flight generation future instead.
+    return _inFlight ??= _load();
+  }
+
+  static Future<String> _load() async {
     final prefs = await SharedPreferences.getInstance();
     var id = prefs.getString(_deviceIdKey);
     if (id == null) {
@@ -20,6 +28,7 @@ class DeviceIdentity {
       await prefs.setString(_deviceIdKey, id);
     }
     _cached = id;
+    _inFlight = null;
     return id;
   }
 
