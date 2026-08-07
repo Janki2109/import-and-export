@@ -8,15 +8,21 @@ class AppConstants {
   // 10.0.2.2 (Android emulator's alias for the host machine) or localhost (iOS simulator)
   // if this address isn't reachable — see resolveNetwork() below.
   static const String _lanIp = '192.168.1.6';
+  // Production backend, deployed on Render — used as the release-build default so a
+  // plain `flutter build apk --release` (no --dart-define overrides) points at the live
+  // API rather than a developer's LAN IP.
+  static const String _prodHost = 'import-and-export-1.onrender.com';
   static const String _configuredHost = String.fromEnvironment(
     'API_HOST',
-    defaultValue: _lanIp,
+    defaultValue: kDebugMode ? _lanIp : _prodHost,
   );
   static const String _configuredScheme = String.fromEnvironment(
     'API_SCHEME',
     defaultValue: kDebugMode ? 'http' : 'https',
   );
-  static const int _port = int.fromEnvironment('API_PORT', defaultValue: 8081);
+  // Render serves the production backend on the standard HTTPS port (443, implicit);
+  // only local dev (the LAN-IP backend above) runs on the explicit 8081 port.
+  static const int _port = int.fromEnvironment('API_PORT', defaultValue: kDebugMode ? 8081 : 443);
 
   static String _host = _configuredHost;
   static const String _scheme = _configuredScheme;
