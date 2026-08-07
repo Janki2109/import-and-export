@@ -56,5 +56,11 @@ func ParseToken(tokenStr, secret string) (*Claims, error) {
 	if err != nil || !token.Valid {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
+	// BUG FIX (L-04): previously a validly-signed token with EMPTY user_id/role claims was
+	// accepted — handlers then ran repository queries with an empty user id instead of
+	// rejecting outright.
+	if claims.UserID == "" || claims.Role == "" {
+		return nil, fmt.Errorf("invalid token: missing required claims")
+	}
 	return claims, nil
 }

@@ -32,8 +32,15 @@ func (s *DisputeService) Raise(ctx context.Context, orderID, raisedBy, reason st
 	if raisedBy != order.ImporterID && raisedBy != order.ExporterID {
 		return nil, fmt.Errorf("not authorized to raise a dispute on this order")
 	}
+	// LOGIC FIX (M-11): OrderCreated (unpaid — no escrow held yet) was previously not in this
+	// blocklist, so a dispute could be raised on an order before any payment happened. The order
+	// would flip to 'disputed' and then be permanently stuck: it could never be paid (payment
+	// entry points require status == OrderCreated), MarkRefunded would reject it ("not in a
+	// refundable state" — escrow is still 'created', never held), and release requires a
+	// delivery that can never happen on an order nobody paid for. A dispute now requires the
+	// order to have actually progressed past unpaid.
 	switch order.Status {
-	case models.OrderPaymentReleased, models.OrderRefunded, models.OrderCancelled, models.OrderDisputed:
+	case models.OrderCreated, models.OrderPaymentReleased, models.OrderRefunded, models.OrderCancelled, models.OrderDisputed:
 		return nil, fmt.Errorf("cannot raise a dispute on an order with status: %s", order.Status)
 	}
 
@@ -81,25 +88,38 @@ func (s *DisputeService) Resolve(ctx context.Context, disputeID, adminID, resolu
 		return fmt.Errorf("dispute is already %s", dispute.Status)
 	}
 
+	if resolution != "refund" && resolution != "release" {
+		return fmt.Errorf("resolution must be 'refund' or 'release'")
+	}
+
+	// BUG FIX (H-12): previously moved money FIRST and closed the dispute row second, with no
+	// shared transaction — if the second write failed (DB blip etc), the money had already
+	// moved but the dispute stayed 'open' forever: a retry then failed too (MarkRefunded/release
+	// reject an already-refunded/released escrow as "not in a refundable state"), permanently
+	// blocking ConfirmDeliveryAndRelease on that order via the open-dispute guard. The dispute
+	// row is now closed FIRST — if that fails, nothing else has happened yet (safe to retry). If
+	// the subsequent money-move fails, the dispute is reopened so the state stays consistent
+	// rather than silently claiming "resolved" while no money actually moved.
+	if err := s.disputeRepo.Resolve(ctx, disputeID, adminID, "resolved", notes); err != nil {
+		return err
+	}
+
 	switch resolution {
 	case "refund":
 		order, err := s.orderRepo.GetByID(ctx, dispute.OrderID)
 		if err != nil {
+			_ = s.disputeRepo.Reopen(ctx, disputeID)
 			return fmt.Errorf("look up order for refund: %w", err)
 		}
 		if err := s.escrowRepo.MarkRefunded(ctx, dispute.OrderID, order.ImporterID); err != nil {
+			_ = s.disputeRepo.Reopen(ctx, disputeID)
 			return fmt.Errorf("refund importer: %w", err)
 		}
 	case "release":
 		if err := s.orderSvc.ConfirmDeliveryAndRelease(ctx, dispute.OrderID, adminID, false); err != nil {
+			_ = s.disputeRepo.Reopen(ctx, disputeID)
 			return fmt.Errorf("release to exporter: %w", err)
 		}
-	default:
-		return fmt.Errorf("resolution must be 'refund' or 'release'")
-	}
-
-	if err := s.disputeRepo.Resolve(ctx, disputeID, adminID, "resolved", notes); err != nil {
-		return err
 	}
 	_ = s.auditRepo.Record(ctx, adminID, "dispute.resolve", "dispute", disputeID, map[string]interface{}{"resolution": resolution, "notes": notes})
 

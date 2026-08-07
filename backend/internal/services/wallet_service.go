@@ -21,14 +21,23 @@ func NewWalletService(repo *repository.WalletRepository, userRepo *repository.Us
 }
 
 type WalletSummary struct {
-	Balance        float64              `json:"balance"`
-	PendingRelease float64              `json:"pending_release"` // held escrow on this user's orders, not yet released
-	TotalReleased  float64              `json:"total_released"`  // lifetime escrow payouts released to this user
-	Transactions   []models.LedgerEntry `json:"transactions"`
+	Balance          float64              `json:"balance"`
+	AvailableBalance float64              `json:"available_balance"` // balance minus pending withdrawal requests — what Withdraw() actually checks against
+	PendingRelease   float64              `json:"pending_release"`   // held escrow on this user's orders, not yet released
+	TotalReleased    float64              `json:"total_released"`    // lifetime escrow payouts released to this user
+	Transactions     []models.LedgerEntry `json:"transactions"`
 }
 
 func (s *WalletService) GetSummary(ctx context.Context, userID string) (*WalletSummary, error) {
 	balance, err := s.repo.Balance(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	// BUG FIX (L-08): previously showed the raw ledger balance with pending withdrawal requests
+	// not deducted, so the screen would show e.g. "₹1,00,000" and a second withdrawal attempt
+	// would then be rejected with "available: 0.00" — confusing since nothing on screen
+	// explained why. AvailableBalance now matches exactly what Withdraw() itself checks against.
+	pending, err := s.repo.PendingWithdrawalsTotal(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -43,10 +52,11 @@ func (s *WalletService) GetSummary(ctx context.Context, userID string) (*WalletS
 		return nil, err
 	}
 	return &WalletSummary{
-		Balance:        balance,
-		PendingRelease: escrowTotals.PendingRelease,
-		TotalReleased:  escrowTotals.TotalReleased,
-		Transactions:   txns,
+		Balance:          balance,
+		AvailableBalance: balance - pending,
+		PendingRelease:   escrowTotals.PendingRelease,
+		TotalReleased:    escrowTotals.TotalReleased,
+		Transactions:     txns,
 	}, nil
 }
 
@@ -73,25 +83,16 @@ func (s *WalletService) Withdraw(ctx context.Context, userID string, amount floa
 		return fmt.Errorf("KYC approval required before withdrawing funds")
 	}
 
-	balance, err := s.repo.Balance(ctx, userID)
-	if err != nil {
-		return err
-	}
-	pending, err := s.repo.PendingWithdrawalsTotal(ctx, userID)
-	if err != nil {
-		return err
-	}
-	available := balance - pending
-	if amount > available {
-		return fmt.Errorf("insufficient wallet balance (available: %.2f, %.2f already pending approval)", available, pending)
-	}
-
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil || user == nil {
 		return fmt.Errorf("user not found")
 	}
 
-	if _, err := s.repo.CreateWithdrawalRequest(ctx, userID, amount); err != nil {
+	// RACE FIX (C-06): the balance check and the request insert are now one atomic,
+	// advisory-lock-guarded transaction (WalletRepository.CreateWithdrawalRequestIfSufficientBalance)
+	// instead of four separate unlocked queries — see that method's doc comment for the full
+	// double-spend scenario this closes.
+	if _, err := s.repo.CreateWithdrawalRequestIfSufficientBalance(ctx, userID, amount); err != nil {
 		return err
 	}
 	_ = s.notification.Send(ctx, userID, "Withdrawal Requested", fmt.Sprintf("Your withdrawal request of ₹%.2f has been submitted and is pending admin approval.", amount), "wallet", nil)

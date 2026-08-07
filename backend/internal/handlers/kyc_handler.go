@@ -28,6 +28,7 @@ type submitKYCRequest struct {
 	BankAccountHolderName *string `json:"bank_account_holder_name"`
 	BankAccountNumber     *string `json:"bank_account_number"`
 	BankIFSC              *string `json:"bank_ifsc"`
+	BankDocURL            *string `json:"bank_doc_url"`
 }
 
 // Submit — expects doc URLs already uploaded to S3 by the client (Flutter uploads directly
@@ -45,6 +46,7 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 		BusinessLicense: req.BusinessLicense, PANDocURL: req.PANDocURL, GSTDocURL: req.GSTDocURL,
 		IECDocURL: req.IECDocURL, AddressDocURL: req.AddressDocURL,
 		BankAccountHolderName: req.BankAccountHolderName, BankAccountNumber: req.BankAccountNumber, BankIFSC: req.BankIFSC,
+		BankDocURL: req.BankDocURL,
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
@@ -73,6 +75,19 @@ func (h *KYCHandler) ListPending(c *gin.Context) {
 	list, err := h.kycService.ListPending(c.Request.Context(), 50, 0, baseURL(c))
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, list)
+}
+
+// ListByStatus — admin review queue tabs: ?status=pending|verified|rejected|needs_reupload.
+// Enriched with applicant identity (name/email/phone/role/company/country) unlike
+// ListPending, which only ever returns raw kyc_details rows.
+func (h *KYCHandler) ListByStatus(c *gin.Context) {
+	status := c.DefaultQuery("status", "pending")
+	list, err := h.kycService.ListByStatus(c.Request.Context(), status, 100, 0, baseURL(c))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, list)
@@ -109,4 +124,18 @@ func (h *KYCHandler) Reject(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, gin.H{"message": "KYC rejected"})
+}
+
+func (h *KYCHandler) RequestReupload(c *gin.Context) {
+	adminID := c.GetString("user_id")
+	var req approveRejectRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Reason == "" {
+		response.Error(c, http.StatusBadRequest, "reason is required to request a re-upload")
+		return
+	}
+	if err := h.kycService.RequestReupload(c.Request.Context(), req.UserID, adminID, req.Reason); err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "Re-upload requested"})
 }

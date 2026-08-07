@@ -49,13 +49,17 @@ const (
 )
 
 type Membership struct {
-	ID         string         `json:"id" db:"id"`
-	UserID     string         `json:"user_id" db:"user_id"`
+	ID string `json:"id" db:"id"`
+	UserID string `json:"user_id" db:"user_id"`
 	Tier       MembershipTier `json:"tier" db:"tier"`
 	IsFeatured bool           `json:"is_featured" db:"is_featured"`
 	ExpiresAt  *time.Time     `json:"expires_at,omitempty" db:"expires_at"`
-	CreatedAt  time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at" db:"updated_at"`
+	// FeaturedExpiresAt — BUG FIX (H-09): featured placement previously shared the tier's own
+	// ExpiresAt column, so buying a featured listing extended (and could indefinitely renew) a
+	// more expensive subscription tier at the featured-listing price. Tracked separately now.
+	FeaturedExpiresAt *time.Time `json:"featured_expires_at,omitempty" db:"featured_expires_at"`
+	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type Advertisement struct {

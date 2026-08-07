@@ -173,12 +173,25 @@ class AdminService {
     return res.data['data'] as List? ?? [];
   }
 
+  /// Enriched review queue for a given tab — status is one of
+  /// 'pending' | 'verified' | 'rejected' | 'needs_reupload'. Each item includes the
+  /// applicant's name/email/phone/role/company/country alongside the raw KYC fields,
+  /// unlike [listPendingKYC].
+  Future<List<dynamic>> listKYCByStatus(String status) async {
+    final res = await _client.get('/kyc/list', query: {'status': status});
+    return res.data['data'] as List? ?? [];
+  }
+
   Future<void> approveKYC(String userId) async {
     await _client.post('/kyc/approve', data: {'user_id': userId});
   }
 
   Future<void> rejectKYC(String userId, String reason) async {
     await _client.post('/kyc/reject', data: {'user_id': userId, 'reason': reason});
+  }
+
+  Future<void> requestKYCReupload(String userId, String reason) async {
+    await _client.post('/kyc/request-reupload', data: {'user_id': userId, 'reason': reason});
   }
 
   // ---- Disputes review ----

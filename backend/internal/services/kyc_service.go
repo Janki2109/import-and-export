@@ -42,6 +42,7 @@ func (s *KYCService) resolveDocURLs(kyc *models.KYCDetails, baseURL string) {
 	kyc.GSTDocURL = resolve(kyc.GSTDocURL)
 	kyc.IECDocURL = resolve(kyc.IECDocURL)
 	kyc.AddressDocURL = resolve(kyc.AddressDocURL)
+	kyc.BankDocURL = resolve(kyc.BankDocURL)
 }
 
 type SubmitKYCInput struct {
@@ -57,8 +58,17 @@ type SubmitKYCInput struct {
 	BankAccountHolderName *string
 	BankAccountNumber     *string
 	BankIFSC              *string
+	BankDocURL            *string
 }
 
+// Submit — development-mode policy: a document upload alone is enough to submit KYC.
+// Number fields (PAN/GST/IEC/bank details) are optional free text; if present they're
+// stored as-is with no format enforcement, and admin does the real verification by
+// eyeballing the uploaded document. (Format validation lived here briefly — removed
+// because it rejected submissions whenever OCR/auto-fill hadn't populated a field,
+// which blocked users who'd correctly uploaded a document but typed nothing. Once
+// real OCR extraction lands, format checks belong on the *extracted* value, not as a
+// submission gate.)
 func (s *KYCService) Submit(ctx context.Context, in SubmitKYCInput) (*models.KYCDetails, error) {
 	k := &models.KYCDetails{
 		UserID:                in.UserID,
@@ -73,6 +83,7 @@ func (s *KYCService) Submit(ctx context.Context, in SubmitKYCInput) (*models.KYC
 		BankAccountHolderName: in.BankAccountHolderName,
 		BankAccountNumber:     in.BankAccountNumber,
 		BankIFSC:              in.BankIFSC,
+		BankDocURL:            in.BankDocURL,
 	}
 	if err := s.kycRepo.Upsert(ctx, k); err != nil {
 		return nil, fmt.Errorf("submitting kyc: %w", err)
@@ -96,6 +107,33 @@ func (s *KYCService) ListPending(ctx context.Context, limit, offset int, baseURL
 	}
 	for i := range list {
 		s.resolveDocURLs(&list[i], baseURL)
+	}
+	return list, nil
+}
+
+// validKYCListStatuses — the admin review queue's four tabs (Pending/Approved/Rejected/
+// Needs Re-upload). "pending" here maps to the 'submitted' DB status, matching what users
+// see as "Under Review" — see kyc_screen.dart's _StatusBanner.
+var validKYCListStatuses = map[string]string{
+	"pending":        "submitted",
+	"submitted":      "submitted",
+	"verified":       "verified",
+	"approved":       "verified",
+	"rejected":       "rejected",
+	"needs_reupload": "needs_reupload",
+}
+
+func (s *KYCService) ListByStatus(ctx context.Context, status string, limit, offset int, baseURL string) ([]models.KYCReviewItem, error) {
+	dbStatus, ok := validKYCListStatuses[status]
+	if !ok {
+		return nil, fmt.Errorf("invalid status %q", status)
+	}
+	list, err := s.kycRepo.ListByStatus(ctx, dbStatus, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		s.resolveDocURLs(&list[i].KYCDetails, baseURL)
 	}
 	return list, nil
 }
@@ -155,5 +193,17 @@ func (s *KYCService) Reject(ctx context.Context, userID, adminID, reason string)
 	}
 	_ = s.auditRepo.Record(ctx, adminID, "kyc.reject", "kyc_details", userID, map[string]interface{}{"reason": reason})
 	_ = s.notification.Send(ctx, userID, "KYC Rejected", fmt.Sprintf("Your KYC submission was rejected: %s. Please resubmit with corrected documents.", reason), "kyc", nil)
+	return nil
+}
+
+// RequestReupload — softer than Reject: the admin isn't closing the case out, just asking
+// for a corrected/clearer document. Distinct status so the user-facing KYC screen and the
+// admin queue's tabs can tell the two apart (see kyc_screen.dart's _StatusBanner).
+func (s *KYCService) RequestReupload(ctx context.Context, userID, adminID, reason string) error {
+	if err := s.kycRepo.UpdateStatus(ctx, userID, "needs_reupload", adminID, &reason); err != nil {
+		return err
+	}
+	_ = s.auditRepo.Record(ctx, adminID, "kyc.request_reupload", "kyc_details", userID, map[string]interface{}{"reason": reason})
+	_ = s.notification.Send(ctx, userID, "KYC: Re-upload Requested", fmt.Sprintf("Please re-upload the following: %s", reason), "kyc", nil)
 	return nil
 }

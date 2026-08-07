@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
@@ -26,7 +27,10 @@ func (s *APIKeyService) Generate(ctx context.Context, userID string, label *stri
 	if err != nil {
 		return "", nil, err
 	}
-	if membership == nil || membership.Tier != models.MembershipEnterprise {
+	// BUG FIX (M-06): previously ignored membership.ExpiresAt entirely — a user whose Enterprise
+	// subscription lapsed a year ago could still mint new API keys with unlimited lifetime.
+	if membership == nil || membership.Tier != models.MembershipEnterprise ||
+		(membership.ExpiresAt != nil && membership.ExpiresAt.Before(time.Now())) {
 		return "", nil, fmt.Errorf("API access requires an active Enterprise subscription")
 	}
 

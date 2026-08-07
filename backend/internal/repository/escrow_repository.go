@@ -273,9 +273,19 @@ func (r *EscrowRepository) RefundPartial(ctx context.Context, orderID, importerI
 
 // MarkOnHold — admin pauses a held payment (e.g. pending investigation), which also blocks
 // the auto-release cron from releasing it on schedule until admin releases or refunds it.
+// BUG FIX (M-10): previously ignored RowsAffected — an admin clicking "Hold Payment" on an
+// escrow that isn't currently 'held' (already released/refunded/on_hold) got a silent success:
+// an audit row was written and both parties notified "payment placed on hold" while nothing
+// actually changed, and the admin had no signal to keep investigating.
 func (r *EscrowRepository) MarkOnHold(ctx context.Context, orderID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE escrow_payments SET status = 'on_hold' WHERE order_id = $1 AND status = 'held'`, orderID)
-	return err
+	cmd, err := r.db.Exec(ctx, `UPDATE escrow_payments SET status = 'on_hold' WHERE order_id = $1 AND status = 'held'`, orderID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("escrow payment for order %s is not currently held (already released, refunded, or on hold)", orderID)
+	}
+	return nil
 }
 
 // MarkAdminNotified — the auto-release timer calls this once it's sent the "escrow due for

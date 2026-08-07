@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -113,7 +114,7 @@ func main() {
 	stripeClient := stripe.NewClient(cfg.StripeSecretKey)
 	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, paymentTermsRepo, cfg, notificationService, complianceService, stripeClient)
 	negotiationService := services.NewNegotiationService(negotiationRepo, rfqRepo, quotationRepo, auditLogRepo, notificationService)
-	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, auditLogRepo, notificationService, documentSecurityService)
+	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, escrowRepo, auditLogRepo, notificationService, documentSecurityService)
 	razorpayClient := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)
 	kycService := services.NewKYCService(kycRepo, userRepo, auditLogRepo, notificationService, razorpayClient, documentSecurityService)
 	shipmentService := services.NewShipmentService(shipmentRepo, orderRepo, complianceService, notificationService)
@@ -181,7 +182,7 @@ func main() {
 		Compliance:    handlers.NewComplianceHandler(complianceService),
 		Negotiation:   handlers.NewNegotiationHandler(negotiationService),
 		PaymentTerms:  handlers.NewPaymentTermsHandler(paymentTermsService),
-		Security:      handlers.NewSecurityHandler(securityService, documentSecurityService),
+		Security:      handlers.NewSecurityHandler(securityService, documentSecurityService, cfg.JWTSecret),
 		Webhook:       handlers.NewWebhookHandler(cfg, orderService),
 	}
 
@@ -190,6 +191,20 @@ func main() {
 	}
 
 	r := gin.Default()
+	// SECURITY FIX (H-04): Gin trusts X-Forwarded-For from ANY client by default when no
+	// trusted proxies are configured — the rate limiter (and login_attempts.ip_address, and the
+	// security dashboard) key off c.ClientIP(), which previously took whatever the request
+	// itself claimed. An attacker brute-forcing /auth/login could send a different
+	// X-Forwarded-For per request and never hit the same rate-limit bucket twice. Only trust
+	// forwarding headers from an actual reverse proxy (loopback/private ranges cover the common
+	// nginx/ELB/Cloud Run deployment shapes used here); set TRUSTED_PROXIES to override.
+	trustedProxies := []string{"127.0.0.1", "::1"}
+	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
+		trustedProxies = strings.Split(v, ",")
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
+	}
 	// SECURITY FIX (previously C6/C7, "known issue, not fixed"): both unauthenticated static
 	// routes (`/files/documents`, `/files/uploads`) have been REMOVED. They previously served
 	// ./storage/documents and cfg.LocalStorageRoot to anyone who guessed/enumerated a filename,
@@ -202,16 +217,22 @@ func main() {
 	// re-signs stored references fresh (see DocumentSecurityService.ResolveStoredValue), which
 	// also transparently upgrades any already-stored legacy `/files/uploads/<key>` value found
 	// in the database to a signed URL — so removing the route doesn't strand old data either.
-	r.StaticFile("/docs/openapi.yaml", "./docs/openapi.yaml")
-	r.GET("/docs", func(c *gin.Context) {
-		c.Data(200, "text/html; charset=utf-8", []byte(swaggerUIPage))
-	})
 	routes.Register(r, h, cfg, func(ctx context.Context, keyHash string) (string, string, bool) {
 		userID, role, err := apiKeyRepo.UserIDForValidKey(ctx, keyHash)
 		if err != nil || userID == "" {
 			return "", "", false
 		}
 		return userID, role, true
+	})
+	// BUG FIX (M-07): these two routes were previously registered BEFORE routes.Register ran
+	// r.Use(middleware.SecurityHeaders()) inside it — Gin snapshots each route's middleware
+	// chain at registration time, so anything registered earlier never got the OWASP headers
+	// (nosniff/X-Frame-Options/CSP), which mattered specifically for any uploaded-content static
+	// route (now removed) but is fixed here too for consistency/defense in depth. Registered
+	// after routes.Register now so every route — these included — gets the global middleware.
+	r.StaticFile("/docs/openapi.yaml", "./docs/openapi.yaml")
+	r.GET("/docs", func(c *gin.Context) {
+		c.Data(200, "text/html; charset=utf-8", []byte(swaggerUIPage))
 	})
 
 	// Auto-release cron: checks every 30 min for orders past their release_due_at window.

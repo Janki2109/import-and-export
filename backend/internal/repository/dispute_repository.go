@@ -101,3 +101,13 @@ func (r *DisputeRepository) Resolve(ctx context.Context, id, resolvedBy, status,
 	}
 	return nil
 }
+
+// Reopen — H-12 support: if the money-move step after Resolve() fails, the dispute is flipped
+// back to 'open' rather than being left in an inconsistent "resolved but nothing actually moved"
+// state.
+func (r *DisputeRepository) Reopen(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE disputes SET status = 'open', resolution_notes = NULL, resolved_by = NULL, resolved_at = NULL
+		WHERE id = $1`, id)
+	return err
+}

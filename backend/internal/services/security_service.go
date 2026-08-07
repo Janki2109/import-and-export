@@ -101,6 +101,17 @@ func (s *SecurityService) TrustDevice(ctx context.Context, userID, deviceRowID s
 	return s.deviceRepo.SetTrusted(ctx, userID, deviceRowID, trusted)
 }
 
+// BUG FIX (M-05): previously only set user_devices.is_active = false — refreshTokenRepo was
+// already a field on this struct but never actually used, and no middleware consults
+// user_devices at all, so a user "logging out" a stolen device got a success message while that
+// device's existing refresh token kept minting fresh access tokens for up to 30 days. Since
+// refresh_tokens has no per-device linkage to scope a targeted revoke to just this one device,
+// this now also revokes ALL of the user's refresh tokens (same as LogoutAllDevices) — blunter
+// than a per-device revoke, but it actually ends the session instead of only cosmetically
+// marking a device row inactive.
 func (s *SecurityService) LogoutDevice(ctx context.Context, userID, deviceRowID string) error {
-	return s.deviceRepo.Logout(ctx, userID, deviceRowID)
+	if err := s.deviceRepo.Logout(ctx, userID, deviceRowID); err != nil {
+		return err
+	}
+	return s.refreshTokenRepo.RevokeAllForUser(ctx, userID)
 }

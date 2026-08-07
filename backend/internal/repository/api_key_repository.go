@@ -63,7 +63,16 @@ func (r *APIKeyRepository) UserIDForValidKey(ctx context.Context, keyHash string
 		return "", "", err
 	}
 
-	err = r.db.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, userID).Scan(&role)
+	// SECURITY FIX (H-03): the API-key auth path previously skipped every account-state check
+	// the JWT path enforces — an admin deactivating a fraudulent/compromised account correctly
+	// blocked its Login/RefreshTokens, but an existing X-API-Key kept granting full access
+	// (including to admin routes) indefinitely. Now joins users.is_active and treats a
+	// deactivated account's key the same as an invalid one.
+	var isActive bool
+	err = r.db.QueryRow(ctx, `SELECT role, is_active FROM users WHERE id = $1`, userID).Scan(&role, &isActive)
+	if err == nil && !isActive {
+		return "", "", nil
+	}
 	if err != nil {
 		return "", "", err
 	}

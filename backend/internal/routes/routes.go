@@ -163,8 +163,10 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			kyc.POST("/submit", h.KYC.Submit)
 			kyc.GET("/me", h.KYC.GetMyStatus)
 			kyc.GET("/pending", middleware.RequireRole("admin"), h.KYC.ListPending)
+			kyc.GET("/list", middleware.RequireRole("admin"), h.KYC.ListByStatus)
 			kyc.POST("/approve", middleware.RequireRole("admin"), h.KYC.Approve)
 			kyc.POST("/reject", middleware.RequireRole("admin"), h.KYC.Reject)
+			kyc.POST("/request-reupload", middleware.RequireRole("admin"), h.KYC.RequestReupload)
 		}
 
 		shipments := protected.Group("/shipments")

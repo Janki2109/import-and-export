@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"fmt"
 	"log"
 	"math"
+	"math/big"
 	"math/rand"
 	"strings"
 	"time"
@@ -157,8 +159,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 }
 
 // ListMyOrders — role determines whether we filter by importer_id or exporter_id.
-func (s *OrderService) ListMyOrders(ctx context.Context, userID, role string, status *string) ([]models.Order, error) {
-	orders, err := s.orderRepo.ListByUser(ctx, userID, models.UserRole(role), status, 50, 0)
+func (s *OrderService) ListMyOrders(ctx context.Context, userID, role string, status *string, limit, offset int) ([]models.Order, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	orders, err := s.orderRepo.ListByUser(ctx, userID, models.UserRole(role), status, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list orders: %w", err)
 	}
@@ -366,15 +371,42 @@ func (s *OrderService) ConfirmDeliveryAndRelease(ctx context.Context, orderID, a
 	}
 
 	// BUG FIX (C1/C2): previously any authenticated importer could release escrow on ANY order by
-	// supplying its orderID, not just their own orders — no ownership check existed. Also added a
-	// check blocking self-initiated release while an open dispute exists on the order.
+	// supplying its orderID, not just their own orders — no ownership check existed.
+	if requireOwnership && actorID != order.ImporterID {
+		return fmt.Errorf("not authorized: this order does not belong to you")
+	}
+	// LOGIC FIX (L-09): order.Status was never consulted at all — an importer could confirm
+	// delivery and release the full payout on an order that was never actually shipped (a
+	// mis-tap released the payout with zero goods movement and no way back). Self-service
+	// delivery confirmation now requires the order to have actually progressed to a shipped
+	// state first. Admin/dispute-resolution releases (requireOwnership=false) intentionally
+	// keep the broader trust boundary they already had — an admin resolving a dispute or
+	// approving a direct release is a deliberate override, not a mis-tap.
 	if requireOwnership {
-		if actorID != order.ImporterID {
-			return fmt.Errorf("not authorized: this order does not belong to you")
+		switch order.Status {
+		case models.OrderShipped, models.OrderInTransit, models.OrderDelivered, models.OrderConfirmed:
+			// ok — goods have actually moved
+		default:
+			return fmt.Errorf("cannot confirm delivery: order has not been shipped yet (status: %s)", order.Status)
 		}
-		if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
-			return fmt.Errorf("cannot release: this order has an open dispute pending resolution")
-		}
+	}
+	// RACE FIX (H-13): the open-dispute check previously only ran when requireOwnership was
+	// true — the auto-release cron calls this with requireOwnership=false, and the cron's own
+	// dispute check (reading order.Status at the top of its loop iteration) left a race window
+	// where a dispute raised between that read and this call would still let the cron release
+	// escrow out from under an unresolved dispute (which then becomes unrefundable, since
+	// MarkRefunded rejects an already-released escrow). The dispute check is now unconditional —
+	// DisputeService.Resolve's own "release" call path is unaffected because it resolves the
+	// dispute row to 'resolved' BEFORE calling this, so GetOpenByOrderID correctly finds nothing.
+	// FAIL-CLOSED FIX (M-23): previously "derr == nil && openDispute != nil" meant a transient
+	// DB error on this check silently SKIPPED it — releasing escrow with a dispute potentially
+	// still open. A lookup error is now itself treated as "don't release", not "assume clear".
+	openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID)
+	if derr != nil {
+		return fmt.Errorf("could not verify dispute status, please retry: %w", derr)
+	}
+	if openDispute != nil {
+		return fmt.Errorf("cannot release: this order has an open dispute pending resolution")
 	}
 
 	escrow, err := s.escrowRepo.GetByOrderID(ctx, orderID)
@@ -428,7 +460,10 @@ func (s *OrderService) RefundPayment(ctx context.Context, orderID, adminID, reas
 	if err != nil {
 		return err
 	}
-	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
+	// FAIL-CLOSED FIX (M-23): a lookup error here must block the refund, not silently allow it.
+	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr != nil {
+		return fmt.Errorf("could not verify dispute status, please retry: %w", derr)
+	} else if openDispute != nil {
 		return fmt.Errorf("cannot refund directly: order has an open dispute — resolve it via the Disputes screen instead")
 	}
 	if err := s.escrowRepo.MarkRefunded(ctx, orderID, order.ImporterID); err != nil {
@@ -449,7 +484,10 @@ func (s *OrderService) RefundPartial(ctx context.Context, orderID, adminID strin
 	if err != nil {
 		return err
 	}
-	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr == nil && openDispute != nil {
+	// FAIL-CLOSED FIX (M-23): a lookup error here must block the refund, not silently allow it.
+	if openDispute, derr := s.disputeRepo.GetOpenByOrderID(ctx, orderID); derr != nil {
+		return fmt.Errorf("could not verify dispute status, please retry: %w", derr)
+	} else if openDispute != nil {
 		return fmt.Errorf("cannot refund directly: order has an open dispute — resolve it via the Disputes screen instead")
 	}
 	if err := s.escrowRepo.RefundPartial(ctx, orderID, order.ImporterID, amount); err != nil {
@@ -475,9 +513,21 @@ func round2(f float64) float64 {
 	return float64(int(f*100+0.5)) / 100
 }
 
+// generateOrderNumber — BUG FIX (M-27): previously a 6-digit rand.Intn(999999) suffix (which
+// also never returns 999999) against a UNIQUE column — birthday-bound collision odds reach
+// ~50% by roughly 1,200 orders in a year, surfacing as a raw duplicate-key 500 with no retry
+// (the importer simply couldn't place that order). Widened to a 9-digit suffix seeded from
+// crypto/rand (~1 billion combinations, collision odds negligible at any realistic order
+// volume) plus a millisecond timestamp component for additional entropy across rapid calls.
 func generateOrderNumber() string {
 	year := time.Now().Year()
-	// Production mein ye ek DB sequence honi chahiye taaki collision-proof ho.
-	// Abhi ke liye random suffix — TODO: replace with sequence before go-live.
-	return fmt.Sprintf("OBEI-%d-%06d", year, rand.Intn(999999))
+	return fmt.Sprintf("OBEI-%d-%d%06d", year, time.Now().UnixNano()%1000, secureRandInt(1000000000))
+}
+
+func secureRandInt(max int64) int64 {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(max))
+	if err != nil {
+		return rand.Int63n(max)
+	}
+	return n.Int64()
 }

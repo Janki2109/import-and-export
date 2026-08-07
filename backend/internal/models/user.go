@@ -14,10 +14,11 @@ const (
 type KYCStatus string
 
 const (
-	KYCPending   KYCStatus = "pending"
-	KYCSubmitted KYCStatus = "submitted"
-	KYCVerified  KYCStatus = "verified"
-	KYCRejected  KYCStatus = "rejected"
+	KYCPending       KYCStatus = "pending"
+	KYCSubmitted     KYCStatus = "submitted"
+	KYCVerified      KYCStatus = "verified"
+	KYCRejected      KYCStatus = "rejected"
+	KYCNeedsReupload KYCStatus = "needs_reupload"
 )
 
 type User struct {
@@ -54,9 +55,25 @@ type KYCDetails struct {
 	BankAccountHolderName *string    `json:"bank_account_holder_name,omitempty" db:"bank_account_holder_name"`
 	BankAccountNumber     *string    `json:"bank_account_number,omitempty" db:"bank_account_number"`
 	BankIFSC              *string    `json:"bank_ifsc,omitempty" db:"bank_ifsc"`
+	BankDocURL            *string    `json:"bank_doc_url,omitempty" db:"bank_doc_url"`
 	RejectionReason       *string    `json:"rejection_reason,omitempty" db:"rejection_reason"`
 	VerifiedBy            *string    `json:"verified_by,omitempty" db:"verified_by"`
 	VerifiedAt            *time.Time `json:"verified_at,omitempty" db:"verified_at"`
 	CreatedAt             time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+// KYCReviewItem — KYCDetails plus the applicant identity fields the admin review queue
+// needs (name/email/phone/role/company/country). Joined from users+companies at read
+// time rather than duplicated onto kyc_details, since users/companies are the source of
+// truth for that data and can change after the KYC row was submitted.
+type KYCReviewItem struct {
+	KYCDetails
+	UserFullName    string  `json:"user_full_name" db:"user_full_name"`
+	UserEmail       string  `json:"user_email" db:"user_email"`
+	UserPhone       string  `json:"user_phone" db:"user_phone"`
+	UserRole        string  `json:"user_role" db:"user_role"`
+	UserAvatarURL   *string `json:"user_avatar_url,omitempty" db:"user_avatar_url"`
+	CompanyName     *string `json:"company_name,omitempty" db:"company_name"`
+	CompanyCountry  *string `json:"company_country,omitempty" db:"company_country"`
 }

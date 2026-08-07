@@ -144,18 +144,27 @@ func (s *PaymentTermsService) Setup(ctx context.Context, actorID, actorRole stri
 		return nil, nil, fmt.Errorf("create payment terms: %w", err)
 	}
 
+	// LOGIC FIX (C-04): assign the rounding remainder to the last milestone so amounts sum
+	// EXACTLY to the order total (percentages like [60, 40.1], previously allowed by the 100.1
+	// upper band, could otherwise leave amounts exceeding the order total by a few rupees).
 	var created []models.PaymentMilestone
+	var allocated float64
 	for i, m := range milestones {
 		trigger := m.TriggerEvent
 		if trigger == "" {
 			trigger = "manual_release"
 		}
+		amount := round2(order.TotalAmount * m.Percentage / 100)
+		if i == len(milestones)-1 {
+			amount = round2(order.TotalAmount - allocated)
+		}
+		allocated += amount
 		pm := &models.PaymentMilestone{
 			PaymentTermID: terms.ID,
 			ReleaseOrder:  i + 1,
 			Title:         m.Title,
 			Percentage:    m.Percentage,
-			Amount:        order.TotalAmount * m.Percentage / 100,
+			Amount:        amount,
 			TriggerEvent:  trigger,
 			ProofRequired: m.ProofRequired,
 		}
@@ -233,9 +242,14 @@ func (s *PaymentTermsService) PayMilestone(ctx context.Context, milestoneID, imp
 	if err != nil {
 		return err
 	}
+	// LOGIC FIX (H-11): previously only blocked when a predecessor was still 'pending' — a
+	// predecessor that was paid then REJECTED, put on_hold, or is merely 'paid'/
+	// 'waiting_approval' (not yet actually released) let later milestones be paid and released
+	// while the earlier one's issue was still unresolved. Now blocks unless every predecessor
+	// has reached the terminal 'released' state.
 	for _, other := range all {
-		if other.ReleaseOrder < m.ReleaseOrder && other.Status == models.MilestonePending {
-			return fmt.Errorf("previous milestone %q must be paid first", other.Title)
+		if other.ReleaseOrder < m.ReleaseOrder && other.Status != models.MilestoneReleased {
+			return fmt.Errorf("previous milestone %q must be fully released first (currently %s)", other.Title, other.Status)
 		}
 	}
 	if err := s.repo.MarkPaid(ctx, milestoneID); err != nil {
@@ -309,7 +323,24 @@ func (s *PaymentTermsService) Release(ctx context.Context, milestoneID, adminID 
 	if err != nil {
 		return nil, err
 	}
-	released, err := s.repo.Release(ctx, milestoneID, order.ID, order.ExporterID, adminID)
+	// LOGIC FIX (H-11): Release() previously had no ordering guard at all — a milestone could
+	// be released out of sequence even if an earlier one was rejected/on-hold/merely-approved.
+	all, err := s.repo.ListMilestones(ctx, terms.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, other := range all {
+		if other.ReleaseOrder < m.ReleaseOrder && other.Status != models.MilestoneReleased {
+			return nil, fmt.Errorf("previous milestone %q must be fully released first (currently %s)", other.Title, other.Status)
+		}
+	}
+
+	// BUG FIX (H-06): base the fee/payout split on the order's own configured PlatformFeePercent
+	// (same formula CreateOrder uses for the single-payment escrow path), instead of crediting
+	// the exporter the full milestone amount with zero platform commission.
+	feeAmount := round2(m.Amount * order.PlatformFeePercent / 100)
+	payoutAmount := round2(m.Amount - feeAmount)
+	released, err := s.repo.Release(ctx, milestoneID, order.ID, order.ExporterID, adminID, payoutAmount, feeAmount)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +348,7 @@ func (s *PaymentTermsService) Release(ctx context.Context, milestoneID, adminID 
 	_ = s.notification.Send(ctx, order.ExporterID, "Funds Credited", fmt.Sprintf("%s %.2f credited to your wallet for %q", terms.Currency, m.Amount, m.Title), "payment_milestone", &milestoneID)
 	_ = s.notification.Send(ctx, order.ImporterID, "Milestone Released", fmt.Sprintf("Milestone %q released to exporter", m.Title), "payment_milestone", &milestoneID)
 
-	all, err := s.repo.ListMilestones(ctx, terms.ID)
+	all, err = s.repo.ListMilestones(ctx, terms.ID)
 	if err == nil {
 		complete := true
 		for _, x := range all {

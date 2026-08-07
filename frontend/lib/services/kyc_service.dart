@@ -20,6 +20,7 @@ class KYCService {
     String? bankAccountHolderName,
     String? bankAccountNumber,
     String? bankIfsc,
+    String? bankDocUrl,
   }) async {
     await _client.post('/kyc/submit', data: {
       'pan_number': panNumber,
@@ -33,6 +34,7 @@ class KYCService {
       'bank_account_holder_name': bankAccountHolderName,
       'bank_account_number': bankAccountNumber,
       'bank_ifsc': bankIfsc,
+      'bank_doc_url': bankDocUrl,
     });
   }
 }

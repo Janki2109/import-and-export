@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"time"
 
 	"github.com/jayashri-infotech/onebharat-backend/internal/models"
@@ -124,7 +123,10 @@ func (s *RFQService) ListMine(ctx context.Context, importerID string) ([]models.
 	return s.rfqRepo.ListByImporter(ctx, importerID, 50, 0)
 }
 
+// generateRFQNumber — BUG FIX (M-27): same widened-entropy fix as generateOrderNumber (see
+// order_service.go) — the previous 6-digit rand.Intn(999999) suffix had a realistic collision
+// window against a UNIQUE column.
 func generateRFQNumber() string {
 	year := time.Now().Year()
-	return fmt.Sprintf("RFQ-%d-%06d", year, rand.Intn(999999))
+	return fmt.Sprintf("RFQ-%d-%d%06d", year, time.Now().UnixNano()%1000, secureRandInt(1000000000))
 }

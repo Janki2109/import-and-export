@@ -202,7 +202,13 @@ func (r *PaymentTermsRepository) Unhold(ctx context.Context, id string) error {
 // Release — the money-moving step. Only from 'approved'. Credits the exporter via a new
 // ledger_entries row (existing generic table, same shape EscrowRepository.MarkReleased already
 // inserts) — escrow_payments and orders rows are never touched.
-func (r *PaymentTermsRepository) Release(ctx context.Context, milestoneID, orderID, exporterID, adminID string) (*models.PaymentMilestone, error) {
+//
+// BUG FIX (H-06): previously credited the exporter the FULL milestone amount with no platform
+// fee split at all — unlike the single-payment escrow path (EscrowRepository.MarkReleased),
+// which always nets off PlatformFeePercent, milestone-based orders earned the platform ZERO
+// commission. payoutAmount/feeAmount are now computed by the caller (same formula CreateOrder
+// already uses) and both a platform-fee ledger credit and the exporter payout are written here.
+func (r *PaymentTermsRepository) Release(ctx context.Context, milestoneID, orderID, exporterID, adminID string, payoutAmount, feeAmount float64) (*models.PaymentMilestone, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -217,8 +223,10 @@ func (r *PaymentTermsRepository) Release(ctx context.Context, milestoneID, order
 	}
 
 	_, err = tx.Exec(ctx, `INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
-		VALUES ($1, $2, 'credit', $3, $4, $5)`,
-		orderID, exporterID, m.Amount, fmt.Sprintf("Milestone released: %s", m.Title), m.ID)
+		VALUES
+			($1, $2, 'credit', $3, $4, $5),
+			($1, NULL, 'credit', $6, 'Platform fee earned (milestone release)', $5)`,
+		orderID, exporterID, payoutAmount, fmt.Sprintf("Milestone released: %s", m.Title), m.ID, feeAmount)
 	if err != nil {
 		return nil, fmt.Errorf("ledger entry: %w", err)
 	}
@@ -247,8 +255,14 @@ type AdminPaymentFilters struct {
 }
 
 func (r *PaymentTermsRepository) AdminList(ctx context.Context, f AdminPaymentFilters) ([]AdminPaymentRow, error) {
+	// BUG FIX (H-23): imp.company_name/exp.company_name are nullable (optional at registration)
+	// and were scanned into non-pointer string fields — any order whose importer or exporter
+	// registered without a company name made this scan fail outright, and GET
+	// /admin/payment-terms returned 500 for the WHOLE list on that one row. Sibling admin
+	// queries deliberately use full_name (NOT NULL) for exactly this reason; here the columns
+	// are genuinely meant to show company name, so COALESCE to full_name as a fallback instead.
 	query := `SELECT ` + paymentTermsColsAliased() + `,
-		o.order_number, imp.company_name, exp.company_name, o.product_name,
+		o.order_number, COALESCE(imp.company_name, imp.full_name), COALESCE(exp.company_name, exp.full_name), o.product_name,
 		(SELECT COUNT(*) FROM payment_milestones WHERE payment_term_id = pt.id),
 		(SELECT COUNT(*) FROM payment_milestones WHERE payment_term_id = pt.id AND status = 'released')
 		FROM payment_terms pt

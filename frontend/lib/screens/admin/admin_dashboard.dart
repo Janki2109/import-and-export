@@ -7,8 +7,8 @@ import '../../models/admin.dart';
 import '../../providers/providers.dart';
 import '../../services/admin_service.dart';
 import '../../widgets/theme_toggle_button.dart';
+import '../../widgets/double_back_to_exit.dart';
 import '../chat/conversations_screen.dart';
-import '../profile/profile_screen.dart';
 import 'admin_audit_log_screen.dart';
 import 'admin_chat_screen.dart';
 import 'admin_compliance_screen.dart';
@@ -21,6 +21,7 @@ import 'admin_negotiation_screen.dart';
 import 'admin_notification_screen.dart';
 import 'admin_payment_screen.dart';
 import 'admin_orders_screen.dart';
+import 'admin_profile_screen.dart';
 import 'admin_quotation_screen.dart';
 import 'admin_reference_data_screen.dart';
 import 'admin_reports_screen.dart';
@@ -153,7 +154,7 @@ class _AdminDashboardState extends ConsumerState<AdminDashboard> {
       case _Section.messages:
         return const ConversationsScreen();
       case _Section.profile:
-        return const ProfileScreen();
+        return const AdminProfileScreen();
     }
   }
 
@@ -170,24 +171,24 @@ class _AdminDashboardState extends ConsumerState<AdminDashboard> {
     );
 
     if (wide) {
-      return Scaffold(
+      return DoubleBackToExit(child: Scaffold(
         body: Row(
           children: [
             sidebar,
             Expanded(
               child: Column(
                 children: [
-                  _TopBar(auth: auth, wide: true),
+                  _TopBar(auth: auth, wide: true, onProfile: () => _select(const _NavItem('Profile', Icons.person_outline, _Section.profile))),
                   Expanded(child: _body()),
                 ],
               ),
             ),
           ],
         ),
-      );
+      ));
     }
 
-    return Scaffold(
+    return DoubleBackToExit(child: Scaffold(
       appBar: AppBar(
         // FittedBox scales the title down instead of truncating it, so the full "Admin
         // Panel" text always stays visible even on narrow phones with several action icons.
@@ -198,20 +199,27 @@ class _AdminDashboardState extends ConsumerState<AdminDashboard> {
             tooltip: 'Global Search',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminSearchScreen())),
           ),
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            tooltip: 'Notifications',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminNotificationScreen())),
+          ),
           const ThemeToggleButton(),
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
+          _AdminProfileMenuButton(name: auth.currentUser?.fullName ?? 'Admin', onProfile: () => _select(const _NavItem('Profile', Icons.person_outline, _Section.profile))),
+          const SizedBox(width: 4),
         ],
       ),
       drawer: Drawer(child: sidebar),
       body: _body(),
-    );
+    ));
   }
 }
 
 class _TopBar extends StatelessWidget {
   final dynamic auth;
   final bool wide;
-  const _TopBar({required this.auth, required this.wide});
+  final VoidCallback onProfile;
+  const _TopBar({required this.auth, required this.wide, required this.onProfile});
 
   @override
   Widget build(BuildContext context) {
@@ -228,20 +236,54 @@ class _TopBar extends StatelessWidget {
             tooltip: 'Global Search',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminSearchScreen())),
           ),
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            tooltip: 'Notifications',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminNotificationScreen())),
+          ),
           const ThemeToggleButton(),
           const SizedBox(width: 4),
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: AppColors.primary.withValues(alpha: 0.15),
-            child: Text((auth.currentUser?.fullName ?? 'A').substring(0, 1).toUpperCase(), style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700)),
-          ),
-          const SizedBox(width: 8),
-          // Flexible so a long admin name shrinks-to-ellipsis instead of overflowing past
-          // the top bar's right edge — the name is the last, unbounded item in this Row.
-          Flexible(
-            child: Text(auth.currentUser?.fullName ?? 'Admin', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
+          _AdminProfileMenuButton(name: auth.currentUser?.fullName ?? 'Admin', onProfile: onProfile),
         ],
+      ),
+    );
+  }
+}
+
+/// Top-right avatar -> profile/logout menu — same pattern as the Exporter/Importer/
+/// Logistics dashboards' profile menu button, but for Admin (Logout lives here instead
+/// of a standalone header icon per the design spec).
+class _AdminProfileMenuButton extends ConsumerWidget {
+  final String name;
+  final VoidCallback onProfile;
+  const _AdminProfileMenuButton({required this.name, required this.onProfile});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.read(authProvider);
+    return PopupMenuButton<String>(
+      tooltip: 'Profile',
+      offset: const Offset(0, 44),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      onSelected: (value) {
+        switch (value) {
+          case 'profile':
+            onProfile();
+            break;
+          case 'logout':
+            auth.logout();
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: 'profile', child: ListTile(leading: Icon(Icons.person_outline), title: Text('Profile'), contentPadding: EdgeInsets.zero)),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout, color: AppColors.error), title: Text('Logout', style: TextStyle(color: AppColors.error)), contentPadding: EdgeInsets.zero)),
+      ],
+      child: CircleAvatar(
+        radius: 16,
+        backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+        child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'A', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700)),
       ),
     );
   }
@@ -333,7 +375,18 @@ class _DashboardData {
   final EscrowSummary escrow;
   final ChartAnalytics charts;
   final List<dynamic> recentOrders;
-  const _DashboardData({required this.analytics, required this.escrow, required this.charts, required this.recentOrders});
+  final List<dynamic> pendingKYC;
+  final List<dynamic> pendingDisputes;
+  final List<dynamic> recentRFQs;
+  const _DashboardData({
+    required this.analytics,
+    required this.escrow,
+    required this.charts,
+    required this.recentOrders,
+    required this.pendingKYC,
+    required this.pendingDisputes,
+    required this.recentRFQs,
+  });
 }
 
 class _AdminDashboardHomeState extends State<_AdminDashboardHome> {
@@ -346,18 +399,27 @@ class _AdminDashboardHomeState extends State<_AdminDashboardHome> {
     _future = _load();
   }
 
+  // Recent-activity feed uses only endpoints the admin panel already calls elsewhere
+  // (listPendingKYC/listPendingDisputes/listAllRFQs, all existing AdminService methods) —
+  // no new backend calls added.
   Future<_DashboardData> _load() async {
     final results = await Future.wait([
       _service.getAnalytics(),
       _service.getEscrowSummary(),
       _service.getChartAnalytics(),
       ApiClient().get('/admin/orders').then((r) => (r.data['data'] as List? ?? [])).catchError((_) => []),
+      _service.listPendingKYC().catchError((_) => <dynamic>[]),
+      _service.listPendingDisputes().catchError((_) => <dynamic>[]),
+      _service.listAllRFQs().catchError((_) => <AdminRFQRow>[]),
     ]);
     return _DashboardData(
       analytics: results[0] as Analytics,
       escrow: results[1] as EscrowSummary,
       charts: results[2] as ChartAnalytics,
       recentOrders: (results[3] as List).take(5).toList(),
+      pendingKYC: (results[4] as List).take(3).toList(),
+      pendingDisputes: (results[5] as List).take(3).toList(),
+      recentRFQs: (results[6] as List).take(3).toList(),
     );
   }
 
@@ -380,6 +442,8 @@ class _AdminDashboardHomeState extends State<_AdminDashboardHome> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              const _AdminWelcomeCard(),
+              const SizedBox(height: 16),
               _StatGrid(analytics: d.analytics, escrow: d.escrow, charts: d.charts),
               const SizedBox(height: 20),
               Text('Charts & Trends', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
@@ -428,12 +492,200 @@ class _AdminDashboardHomeState extends State<_AdminDashboardHome> {
                       ),
                     )),
               const SizedBox(height: 20),
+              _RecentActivity(pendingKYC: d.pendingKYC, pendingDisputes: d.pendingDisputes, recentRFQs: d.recentRFQs, recentOrders: d.recentOrders),
+              const SizedBox(height: 20),
               Text('Quick Actions', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
               _QuickActionsGrid(),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Admin Welcome Card — same gradient/avatar/completion-ring visual language as the
+/// Exporter/Importer/Logistics welcome cards, but showing admin-specific facts (Super Admin
+/// role, online status, last login) instead of KYC/company data, since the admin account has
+/// neither. Backed by authProvider.currentUser only — no new backend calls.
+class _AdminWelcomeCard extends ConsumerWidget {
+  const _AdminWelcomeCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authProvider);
+    final name = auth.currentUser?.fullName ?? 'Admin';
+    final email = auth.currentUser?.email ?? '';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = isDark
+        ? [AppColorsDark.primary, AppColorsDark.secondary]
+        : [const Color(0xFF0B3D91), const Color(0xFF1857C4)];
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOut,
+      builder: (context, v, child) => Opacity(opacity: v, child: Transform.translate(offset: Offset(0, (1 - v) * 10), child: child)),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [BoxShadow(color: colors.first.withValues(alpha: 0.35), blurRadius: 20, offset: const Offset(0, 10))],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 28,
+              backgroundColor: Colors.white.withValues(alpha: 0.2),
+              child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'A',
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.verified, color: Color(0xFF6FE3A5), size: 18),
+                    ],
+                  ),
+                  if (email.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(email, style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(color: const Color(0xFF6FE3A5).withValues(alpha: 0.2), borderRadius: BorderRadius.circular(20)),
+                        child: const Text('Super Admin', style: TextStyle(color: Color(0xFF6FE3A5), fontSize: 10.5, fontWeight: FontWeight.w700)),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(20)),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.circle, size: 7, color: Color(0xFF6FE3A5)),
+                            SizedBox(width: 5),
+                            Text('Online · Last login: this session', style: TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const CircularProgressIndicator(
+                        value: 1,
+                        strokeWidth: 5,
+                        backgroundColor: Colors.white24,
+                        valueColor: AlwaysStoppedAnimation(Color(0xFF6FE3A5)),
+                      ),
+                      const Text('100%', style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text('Profile', style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 9.5)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Recent Activity — Latest KYC Requests, Latest RFQs, Latest Disputes, Recent Payments (via
+/// recent orders' payout amounts), all drawn from data already fetched for this screen (no
+/// new backend calls). Recent Notifications isn't duplicated here since the header bell
+/// already opens the full AdminNotificationScreen.
+class _RecentActivity extends StatelessWidget {
+  final List<dynamic> pendingKYC;
+  final List<dynamic> pendingDisputes;
+  final List<dynamic> recentRFQs;
+  final List<dynamic> recentOrders;
+  const _RecentActivity({required this.pendingKYC, required this.pendingDisputes, required this.recentRFQs, required this.recentOrders});
+
+  @override
+  Widget build(BuildContext context) {
+    if (pendingKYC.isEmpty && pendingDisputes.isEmpty && recentRFQs.isEmpty && recentOrders.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Recent Activity', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+          if (pendingKYC.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Latest KYC Requests', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            ...pendingKYC.map((k) => _row(icon: Icons.verified_user_outlined, title: 'User ${k['user_id'] ?? ''}', subtitle: k['status'] ?? 'pending')),
+          ],
+          if (recentRFQs.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Latest RFQs', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            ...recentRFQs.map((r) => _row(icon: Icons.request_quote_outlined, title: r is AdminRFQRow ? r.productName : '${r['product_name'] ?? ''}', subtitle: r is AdminRFQRow ? r.status : '${r['status'] ?? ''}')),
+          ],
+          if (recentOrders.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Latest Orders & Payments', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            ...recentOrders.take(3).map((o) => _row(icon: Icons.payments_outlined, title: '${o['order_number'] ?? ''}', subtitle: '₹${o['total_amount'] ?? 0}')),
+          ],
+          if (pendingDisputes.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Latest Disputes', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            ...pendingDisputes.map((d) => _row(icon: Icons.report_problem_outlined, title: d['reason'] ?? '', subtitle: 'Order: ${d['order_id'] ?? ''}')),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _row({required IconData icon, required String title, required String subtitle}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: AppColors.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(child: Text(title, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 8),
+          Text(subtitle, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+        ],
       ),
     );
   }
@@ -685,13 +937,19 @@ class _QuickActionsGridState extends State<_QuickActionsGrid> {
   @override
   Widget build(BuildContext context) {
     final state = context.findAncestorStateOfType<_AdminDashboardState>();
+    // Every item routes to its existing admin screen via the same sidebar-section switch
+    // the rest of the shell uses. "Export Reports" has no separate screen in this app —
+    // it opens the same Reports screen (which contains the export controls) as "View
+    // Reports", rather than inventing a new backend flow.
     final items = [
+      ('Approve KYC', Icons.verified_user_outlined, _Section.kyc),
       ('Manage Users', Icons.people_outline, _Section.users),
       ('Manage Orders', Icons.receipt_long_outlined, _Section.orders),
-      ('Manage Escrow', Icons.account_balance_wallet_outlined, _Section.escrow),
-      ('Manage Shipments', Icons.local_shipping_outlined, _Section.shipments),
-      ('Audit Logs', Icons.history_outlined, _Section.auditLogs),
-      ('Fraud Signals', Icons.security_outlined, _Section.fraud),
+      ('Release Escrow', Icons.account_balance_wallet_outlined, _Section.escrow),
+      ('Review Disputes', Icons.report_problem_outlined, _Section.disputes),
+      ('View Reports', Icons.bar_chart_outlined, _Section.reports),
+      ('Export Reports', Icons.ios_share_outlined, _Section.reports),
+      ('Platform Settings', Icons.settings_outlined, _Section.settings),
     ];
     return GridView.count(
       crossAxisCount: 3,
@@ -730,6 +988,7 @@ class _DashboardSkeleton extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        box(120),
         Row(children: [Expanded(child: box(76)), const SizedBox(width: 10), Expanded(child: box(76)), const SizedBox(width: 10), Expanded(child: box(76))]),
         box(240),
         box(240),

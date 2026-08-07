@@ -99,10 +99,20 @@ func (r *QuotationRepository) Accept(ctx context.Context, quotationID, rfqID, or
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE quotations SET status = 'accepted', order_id = $1 WHERE id = $2`,
-		orderID, quotationID); err != nil {
+	// RACE FIX (C-08): previously this UPDATE had no `AND status = 'pending'` guard and no
+	// RowsAffected check — the Go-level status check in the service ran before either of two
+	// concurrent Accept calls (double-tap / client retry) committed its write, so both could
+	// pass and both call CreateOrder, leaving the importer with two orders/two escrow rows for
+	// one quotation (the second Accept's order_id UPDATE here would also silently orphan the
+	// first order). The UPDATE is now itself the atomic gate.
+	cmd, err := tx.Exec(ctx,
+		`UPDATE quotations SET status = 'accepted', order_id = $1 WHERE id = $2 AND status = 'pending'`,
+		orderID, quotationID)
+	if err != nil {
 		return fmt.Errorf("accept quotation: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("quotation is not in a pending state (already accepted/rejected)")
 	}
 
 	if _, err := tx.Exec(ctx,

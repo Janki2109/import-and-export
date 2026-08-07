@@ -50,6 +50,15 @@ func (s *FleetService) ListMine(ctx context.Context, logisticsID string) ([]mode
 }
 
 func (s *FleetService) Update(ctx context.Context, id string, in UpsertVehicleInput) error {
+	// BUG FIX (H-19): Create defaults an empty status to VehicleActive; Update previously did
+	// not, and status has no binding tag — any PUT /fleet/:id omitting "status" (e.g. a partner
+	// just fixing a registration-number typo) executed SET status='' against the vehicle_status
+	// NOT NULL/enum column, which Postgres rejected outright, so registration-number/capacity
+	// edits could never be saved without also re-specifying a valid status.
+	status := in.Status
+	if status == "" {
+		status = models.VehicleActive
+	}
 	v := &models.FleetVehicle{
 		ID:                 id,
 		LogisticsID:        in.LogisticsID,
@@ -58,7 +67,7 @@ func (s *FleetService) Update(ctx context.Context, id string, in UpsertVehicleIn
 		CapacityKg:         in.CapacityKg,
 		CapacityCBM:        in.CapacityCBM,
 		ServiceRoute:       in.ServiceRoute,
-		Status:             in.Status,
+		Status:             status,
 	}
 	return s.repo.Update(ctx, v)
 }

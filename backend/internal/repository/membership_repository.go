@@ -17,9 +17,9 @@ func NewMembershipRepository(db *pgxpool.Pool) *MembershipRepository {
 }
 
 func (r *MembershipRepository) GetByUserID(ctx context.Context, userID string) (*models.Membership, error) {
-	query := `SELECT id, user_id, tier, is_featured, expires_at, created_at, updated_at FROM memberships WHERE user_id = $1`
+	query := `SELECT id, user_id, tier, is_featured, expires_at, featured_expires_at, created_at, updated_at FROM memberships WHERE user_id = $1`
 	var m models.Membership
-	err := r.db.QueryRow(ctx, query, userID).Scan(&m.ID, &m.UserID, &m.Tier, &m.IsFeatured, &m.ExpiresAt, &m.CreatedAt, &m.UpdatedAt)
+	err := r.db.QueryRow(ctx, query, userID).Scan(&m.ID, &m.UserID, &m.Tier, &m.IsFeatured, &m.ExpiresAt, &m.FeaturedExpiresAt, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -32,11 +32,37 @@ func (r *MembershipRepository) GetByUserID(ctx context.Context, userID string) (
 // Upsert — used both when a user upgrades to premium (after Razorpay payment) and when
 // admin toggles "featured" status.
 func (r *MembershipRepository) Upsert(ctx context.Context, m *models.Membership) error {
-	query := `INSERT INTO memberships (user_id, tier, is_featured, expires_at)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (user_id) DO UPDATE SET tier = EXCLUDED.tier, is_featured = EXCLUDED.is_featured, expires_at = EXCLUDED.expires_at
+	query := `INSERT INTO memberships (user_id, tier, is_featured, expires_at, featured_expires_at)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (user_id) DO UPDATE SET tier = EXCLUDED.tier, is_featured = EXCLUDED.is_featured,
+			expires_at = EXCLUDED.expires_at, featured_expires_at = EXCLUDED.featured_expires_at
 		RETURNING id, created_at, updated_at`
-	return r.db.QueryRow(ctx, query, m.UserID, m.Tier, m.IsFeatured, m.ExpiresAt).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
+	return r.db.QueryRow(ctx, query, m.UserID, m.Tier, m.IsFeatured, m.ExpiresAt, m.FeaturedExpiresAt).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
+
+// CreatePurchase / ConsumePurchase — BUG FIX (H-07): membership purchase confirmation had no
+// idempotency and no payment record at all. A reference is persisted at order-creation time and
+// can only be consumed (marked used) exactly once — a retried/duplicate verify call, or a call
+// with no real matching purchase, is now rejected instead of unconditionally granting tier days.
+func (r *MembershipRepository) CreatePurchase(ctx context.Context, userID, reference, kind string, amount float64) error {
+	_, err := r.db.Exec(ctx, `INSERT INTO membership_purchases (user_id, reference, kind, amount) VALUES ($1,$2,$3,$4)`,
+		userID, reference, kind, amount)
+	return err
+}
+
+// ConsumePurchase marks the reference used and returns the user id it belongs to, or ("", nil)
+// if the reference doesn't exist or was already consumed.
+func (r *MembershipRepository) ConsumePurchase(ctx context.Context, reference string) (string, error) {
+	var userID string
+	err := r.db.QueryRow(ctx, `UPDATE membership_purchases SET consumed_at = now()
+		WHERE reference = $1 AND consumed_at IS NULL RETURNING user_id`, reference).Scan(&userID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return userID, nil
 }
 
 // ListFeatured — role filter joins users so exporter/logistics dashboards can show

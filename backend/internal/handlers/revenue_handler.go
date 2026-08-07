@@ -48,11 +48,23 @@ func (h *MembershipHandler) CreateFeaturedOrder(c *gin.Context) {
 	response.Success(c, http.StatusOK, order)
 }
 
+type verifyPurchaseRequest struct {
+	// BUG FIX (H-07): must be the `reference` value CreatePremiumOrder/CreateFeaturedOrder
+	// returned — required so the server can confirm this is a purchase that was genuinely
+	// issued, and consume it exactly once instead of granting free tier days on every call.
+	Reference string `json:"reference" binding:"required"`
+}
+
 // VerifyPremiumPayment — the client calls this after returning from their UPI app and
 // tapping "Payment Done". Self-declared, no gateway signature involved.
 func (h *MembershipHandler) VerifyPremiumPayment(c *gin.Context) {
 	userID := c.GetString("user_id")
-	if err := h.membershipService.VerifyPremiumPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID}); err != nil {
+	var req verifyPurchaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.membershipService.VerifyPremiumPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID, Reference: req.Reference}); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -61,7 +73,12 @@ func (h *MembershipHandler) VerifyPremiumPayment(c *gin.Context) {
 
 func (h *MembershipHandler) VerifyFeaturedPayment(c *gin.Context) {
 	userID := c.GetString("user_id")
-	if err := h.membershipService.VerifyFeaturedPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID}); err != nil {
+	var req verifyPurchaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.membershipService.VerifyFeaturedPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID, Reference: req.Reference}); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -88,7 +105,8 @@ func (h *MembershipHandler) CreateTierOrder(c *gin.Context) {
 }
 
 type verifyTierPaymentRequest struct {
-	Tier string `json:"tier" binding:"required,oneof=silver gold enterprise"`
+	Tier      string `json:"tier" binding:"required,oneof=silver gold enterprise"`
+	Reference string `json:"reference" binding:"required"`
 }
 
 func (h *MembershipHandler) VerifyTierPayment(c *gin.Context) {
@@ -98,7 +116,7 @@ func (h *MembershipHandler) VerifyTierPayment(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.membershipService.VerifyTierPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID}, models.MembershipTier(req.Tier)); err != nil {
+	if err := h.membershipService.VerifyTierPayment(c.Request.Context(), services.VerifyPurchaseInput{UserID: userID, Reference: req.Reference}, models.MembershipTier(req.Tier)); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}

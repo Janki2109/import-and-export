@@ -66,7 +66,14 @@ func (s *NegotiationService) StartNegotiation(ctx context.Context, quotationID, 
 		return nil, fmt.Errorf("not authorized to negotiate this quotation")
 	}
 
-	if existing, _ := s.repo.GetByQuotationID(ctx, quotationID); existing != nil {
+	// BUG FIX (L-11): previously discarded this lookup's error, so a transient read failure fell
+	// straight through to Create() and surfaced as a raw unique-constraint 400 instead of
+	// returning the existing negotiation the idempotency check was meant to find.
+	existing, existErr := s.repo.GetByQuotationID(ctx, quotationID)
+	if existErr != nil {
+		return nil, fmt.Errorf("checking for existing negotiation: %w", existErr)
+	}
+	if existing != nil {
 		return existing, nil // idempotent — already started
 	}
 
@@ -104,6 +111,20 @@ func (s *NegotiationService) authorize(n *models.Negotiation, requesterID string
 	return fmt.Errorf("not authorized for this negotiation")
 }
 
+// authorizeParty — SECURITY FIX (M-18): stricter than authorize() — used by CounterOffer and
+// AcceptOffer specifically, where partyOf() would otherwise default a non-exporter caller
+// (including an admin, who is neither the importer nor the exporter) to PartyImporter. That let
+// an admin call POST /negotiations/accept and silently BECOME the importer, binding them to a
+// contract on the exporter's terms — LockQuotationFinal would overwrite the quotation without
+// the real importer ever agreeing. Admin retains full authorize() access for read/ForceClose,
+// but only an actual party to the negotiation may submit or accept an offer on their own behalf.
+func (s *NegotiationService) authorizeParty(n *models.Negotiation, requesterID string) error {
+	if requesterID == n.ImporterID || requesterID == n.ExporterID {
+		return nil
+	}
+	return fmt.Errorf("only the importer or exporter on this negotiation may take this action")
+}
+
 func (s *NegotiationService) partyOf(n *models.Negotiation, requesterID string) models.NegotiationParty {
 	if requesterID == n.ExporterID {
 		return models.PartyExporter
@@ -134,7 +155,7 @@ func (s *NegotiationService) CounterOffer(ctx context.Context, negotiationID, ac
 	if err != nil || n == nil {
 		return nil, fmt.Errorf("negotiation not found")
 	}
-	if err := s.authorize(n, actorID, actorRole); err != nil {
+	if err := s.authorizeParty(n, actorID); err != nil {
 		return nil, err
 	}
 	if n.Status != models.NegotiationOpen {
@@ -192,7 +213,7 @@ func (s *NegotiationService) AcceptOffer(ctx context.Context, negotiationID, act
 	if err != nil || n == nil {
 		return fmt.Errorf("negotiation not found")
 	}
-	if err := s.authorize(n, actorID, actorRole); err != nil {
+	if err := s.authorizeParty(n, actorID); err != nil {
 		return err
 	}
 	if n.Status != models.NegotiationOpen {
@@ -274,6 +295,14 @@ func (s *NegotiationService) RejectOffer(ctx context.Context, negotiationID, act
 
 	latest, err := s.repo.GetLatestOffer(ctx, negotiationID)
 	if err == nil && latest != nil {
+		// BUG FIX (L-10): AcceptOffer already blocks a party from acting on their own pending
+		// offer ("you cannot accept your own offer"); RejectOffer had no equivalent guard, so a
+		// party could rejects its OWN offer — the counterparty would then be notified "the
+		// negotiation was rejected", implying THEIR terms were turned down when the other side
+		// actually just withdrew their own.
+		if latest.CreatedBy == s.partyOf(n, actorID) {
+			return fmt.Errorf("you cannot reject your own offer — withdraw it by closing the negotiation instead")
+		}
 		_ = s.repo.SetOfferStatus(ctx, latest.ID, models.OfferRejected)
 	}
 	if err := s.repo.UpdateStatus(ctx, negotiationID, models.NegotiationRejected); err != nil {
@@ -298,6 +327,14 @@ func (s *NegotiationService) CloseNegotiation(ctx context.Context, negotiationID
 	if err := s.authorize(n, actorID, actorRole); err != nil {
 		return err
 	}
+	// LOGIC FIX (M-19): the other three mutators (CounterOffer/AcceptOffer/RejectOffer) all
+	// guard on n.Status != NegotiationOpen; this one had no guard at all, so an already-ACCEPTED
+	// negotiation could be flipped back to 'closed' while the locked quotation it produced
+	// stayed pending/acceptable — the record would say the deal was closed when it was actually
+	// agreed, with no way to tell which happened first.
+	if n.Status != models.NegotiationOpen {
+		return fmt.Errorf("negotiation is not open (status: %s)", n.Status)
+	}
 	if err := s.repo.UpdateStatus(ctx, negotiationID, models.NegotiationClosed); err != nil {
 		return err
 	}
@@ -315,6 +352,11 @@ func (s *NegotiationService) ForceClose(ctx context.Context, negotiationID, admi
 	n, err := s.repo.GetByID(ctx, negotiationID)
 	if err != nil || n == nil {
 		return fmt.Errorf("negotiation not found")
+	}
+	// LOGIC FIX (M-19): same status guard as CloseNegotiation — admin force-close should not be
+	// able to retroactively "close" an already-accepted/rejected/closed negotiation either.
+	if n.Status != models.NegotiationOpen {
+		return fmt.Errorf("negotiation is not open (status: %s)", n.Status)
 	}
 	if err := s.repo.UpdateStatus(ctx, negotiationID, models.NegotiationClosed); err != nil {
 		return err

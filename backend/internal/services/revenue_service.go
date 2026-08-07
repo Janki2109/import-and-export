@@ -23,6 +23,11 @@ func NewMembershipService(membershipRepo *repository.MembershipRepository, cfg *
 	return &MembershipService{membershipRepo: membershipRepo, cfg: cfg}
 }
 
+// GetMine — BUG FIX (H-08): previously returned the stored Tier verbatim with ExpiresAt never
+// compared to now(), so a membership that lapsed months ago was still reported (and trusted by
+// every downstream consumer, e.g. api_key_service.go's Enterprise gate) as fully active — one
+// month's fee bought the tier permanently. Now downgrades to Free once ExpiresAt has passed.
+// IsFeatured is similarly re-evaluated against its own (now-separate, see H-09) expiry.
 func (s *MembershipService) GetMine(ctx context.Context, userID string) (*models.Membership, error) {
 	m, err := s.membershipRepo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -31,21 +36,29 @@ func (s *MembershipService) GetMine(ctx context.Context, userID string) (*models
 	if m == nil {
 		return &models.Membership{UserID: userID, Tier: models.MembershipFree}, nil
 	}
+	now := time.Now()
+	if m.ExpiresAt != nil && m.ExpiresAt.Before(now) {
+		m.Tier = models.MembershipFree
+	}
+	if m.FeaturedExpiresAt != nil && m.FeaturedExpiresAt.Before(now) {
+		m.IsFeatured = false
+	}
 	return m, nil
 }
 
 type PurchaseOrder struct {
-	UPILink string  `json:"upi_link"`
-	Amount  float64 `json:"amount"`
+	UPILink   string  `json:"upi_link"`
+	Amount    float64 `json:"amount"`
+	Reference string  `json:"reference"` // must be echoed back to VerifyXPayment — see H-07
 }
 
 // CreatePremiumOrder — Flutter launches the returned upi://pay link next.
 func (s *MembershipService) CreatePremiumOrder(ctx context.Context, userID string) (*PurchaseOrder, error) {
-	return s.createOrder(userID, s.cfg.PremiumMembershipFee, "premium-membership")
+	return s.createOrder(ctx, userID, s.cfg.PremiumMembershipFee, "premium-membership")
 }
 
 func (s *MembershipService) CreateFeaturedOrder(ctx context.Context, userID string) (*PurchaseOrder, error) {
-	return s.createOrder(userID, s.cfg.FeaturedListingFee, "featured-listing")
+	return s.createOrder(ctx, userID, s.cfg.FeaturedListingFee, "featured-listing")
 }
 
 // CreateTierOrder — subscription tiers: Free (default, no order needed) / Silver (unlimited
@@ -55,12 +68,18 @@ func (s *MembershipService) CreateTierOrder(ctx context.Context, userID string, 
 	if err != nil {
 		return nil, err
 	}
-	return s.createOrder(userID, fee, "tier-"+string(tier))
+	return s.createOrder(ctx, userID, fee, "tier-"+string(tier))
 }
 
 // VerifyTierPayment — self-declared confirm (see VerifyPurchaseInput doc comment).
+// BUG FIX (H-07): now requires the same `reference` CreateTierOrder returned and consumes it
+// exactly once via ConsumePurchase — a retry/double-tap on the same reference, or a call with a
+// reference that was never actually issued, is rejected instead of granting free tier days.
 func (s *MembershipService) VerifyTierPayment(ctx context.Context, in VerifyPurchaseInput, tier models.MembershipTier) error {
 	if _, err := s.feeForTier(tier); err != nil {
+		return err
+	}
+	if err := s.consumeReference(ctx, in); err != nil {
 		return err
 	}
 
@@ -73,8 +92,27 @@ func (s *MembershipService) VerifyTierPayment(ctx context.Context, in VerifyPurc
 	m := &models.Membership{UserID: in.UserID, Tier: tier, ExpiresAt: &expiresAt}
 	if existing != nil {
 		m.IsFeatured = existing.IsFeatured
+		m.FeaturedExpiresAt = existing.FeaturedExpiresAt
 	}
 	return s.membershipRepo.Upsert(ctx, m)
+}
+
+// consumeReference — shared idempotency gate for all Verify* methods (H-07).
+func (s *MembershipService) consumeReference(ctx context.Context, in VerifyPurchaseInput) error {
+	if in.Reference == "" {
+		return fmt.Errorf("a purchase reference is required")
+	}
+	consumedUserID, err := s.membershipRepo.ConsumePurchase(ctx, in.Reference)
+	if err != nil {
+		return err
+	}
+	if consumedUserID == "" {
+		return fmt.Errorf("purchase reference not found or already used")
+	}
+	if consumedUserID != in.UserID {
+		return fmt.Errorf("purchase reference does not belong to this user")
+	}
+	return nil
 }
 
 func (s *MembershipService) feeForTier(tier models.MembershipTier) (float64, error) {
@@ -90,21 +128,33 @@ func (s *MembershipService) feeForTier(tier models.MembershipTier) (float64, err
 	}
 }
 
-func (s *MembershipService) createOrder(userID string, amount float64, receiptPrefix string) (*PurchaseOrder, error) {
-	ref := fmt.Sprintf("%s-%d", receiptPrefix, time.Now().Unix())
-	link := upi.BuildPaymentLink(s.cfg.PlatformUPIVPA, s.cfg.PlatformUPIPayeeName, amount, ref, receiptPrefix)
-	return &PurchaseOrder{UPILink: link, Amount: amount}, nil
+// createOrder — BUG FIX (H-07): the generated reference is now persisted as an unconsumed
+// membership_purchases row before being handed to the client, so VerifyXPayment can later
+// confirm it's a reference that was genuinely issued (and consume it exactly once).
+func (s *MembershipService) createOrder(ctx context.Context, userID string, amount float64, kind string) (*PurchaseOrder, error) {
+	ref := fmt.Sprintf("%s-%d", kind, time.Now().UnixNano())
+	if err := s.membershipRepo.CreatePurchase(ctx, userID, ref, kind, amount); err != nil {
+		return nil, fmt.Errorf("recording purchase reference: %w", err)
+	}
+	link := upi.BuildPaymentLink(s.cfg.PlatformUPIVPA, s.cfg.PlatformUPIPayeeName, amount, ref, kind)
+	return &PurchaseOrder{UPILink: link, Amount: amount, Reference: ref}, nil
 }
 
 // VerifyPurchaseInput is self-declared by the client after they return from their UPI app —
 // there's no gateway signature to check, per the same tradeoff as OrderService.ConfirmPaymentDone.
+// Reference must be the value CreatePremiumOrder/CreateFeaturedOrder/CreateTierOrder returned —
+// BUG FIX (H-07), see consumeReference.
 type VerifyPurchaseInput struct {
-	UserID string
+	UserID    string
+	Reference string
 }
 
 // VerifyPremiumPayment — on confirmation, grants 30 days of premium tier (extends from current
 // expiry if still active, otherwise from now).
 func (s *MembershipService) VerifyPremiumPayment(ctx context.Context, in VerifyPurchaseInput) error {
+	if err := s.consumeReference(ctx, in); err != nil {
+		return err
+	}
 	existing, err := s.membershipRepo.GetByUserID(ctx, in.UserID)
 	if err != nil {
 		return err
@@ -114,22 +164,36 @@ func (s *MembershipService) VerifyPremiumPayment(ctx context.Context, in VerifyP
 	m := &models.Membership{UserID: in.UserID, Tier: models.MembershipPremium, ExpiresAt: &expiresAt}
 	if existing != nil {
 		m.IsFeatured = existing.IsFeatured
+		m.FeaturedExpiresAt = existing.FeaturedExpiresAt
 	}
 	return s.membershipRepo.Upsert(ctx, m)
 }
 
+// VerifyFeaturedPayment — BUG FIX (H-09): previously extended the shared ExpiresAt (the
+// SUBSCRIPTION TIER's expiry), so buying a ₹1,999 featured listing could renew a ₹9,999
+// Enterprise tier for free. Now extends FeaturedExpiresAt, a column of its own — the tier and
+// its expiry are left completely untouched by a featured-listing purchase.
 func (s *MembershipService) VerifyFeaturedPayment(ctx context.Context, in VerifyPurchaseInput) error {
+	if err := s.consumeReference(ctx, in); err != nil {
+		return err
+	}
 	existing, err := s.membershipRepo.GetByUserID(ctx, in.UserID)
 	if err != nil {
 		return err
 	}
-	expiresAt := s.extendExpiry(existing)
 
+	featuredBase := time.Now()
 	tier := models.MembershipFree
+	var tierExpiresAt *time.Time
 	if existing != nil {
 		tier = existing.Tier
+		tierExpiresAt = existing.ExpiresAt
+		if existing.FeaturedExpiresAt != nil && existing.FeaturedExpiresAt.After(featuredBase) {
+			featuredBase = *existing.FeaturedExpiresAt
+		}
 	}
-	m := &models.Membership{UserID: in.UserID, Tier: tier, IsFeatured: true, ExpiresAt: &expiresAt}
+	featuredExpiresAt := featuredBase.Add(30 * 24 * time.Hour)
+	m := &models.Membership{UserID: in.UserID, Tier: tier, ExpiresAt: tierExpiresAt, IsFeatured: true, FeaturedExpiresAt: &featuredExpiresAt}
 	return s.membershipRepo.Upsert(ctx, m)
 }
 

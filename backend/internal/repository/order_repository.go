@@ -94,9 +94,18 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*models.Order
 }
 
 func (r *OrderRepository) ListByUser(ctx context.Context, userID string, role models.UserRole, status *string, limit, offset int) ([]models.Order, error) {
+	// BUG FIX (L-12): previously silently fell back to importer_id for ANY role that wasn't
+	// exactly "exporter" — logistics and admin callers (GET /orders has no RequireRole) got a
+	// silent empty 200 that reads as "you have no orders" rather than "this role isn't
+	// supported by this endpoint", with no error to signal the real cause.
 	col := "importer_id"
-	if role == models.RoleExporter {
+	switch role {
+	case models.RoleExporter:
 		col = "exporter_id"
+	case models.RoleImporter:
+		col = "importer_id"
+	default:
+		return nil, fmt.Errorf("orders list is not available for role %q", role)
 	}
 
 	query := fmt.Sprintf(`SELECT id, order_number, importer_id, exporter_id, product_name, hsn_code,
@@ -124,6 +133,9 @@ func (r *OrderRepository) ListByUser(ctx context.Context, userID string, role mo
 			return nil, err
 		}
 		orders = append(orders, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return orders, nil
 }
@@ -171,6 +183,12 @@ func (r *OrderRepository) GetOrdersDueForAutoRelease(ctx context.Context) ([]mod
 			return nil, err
 		}
 		payments = append(payments, e)
+	}
+	// BUG FIX (M-31): rows.Err() was never checked — a connection drop mid-stream returned
+	// (partial rows, nil error), so the auto-release cron treated a truncated pass as fully
+	// successful and the remaining due escrows silently never got processed that tick.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return payments, nil
 }

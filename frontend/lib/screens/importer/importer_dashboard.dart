@@ -12,6 +12,7 @@ import '../../services/notification_service.dart';
 import '../../services/order_service.dart';
 import '../../services/trade_service.dart';
 import '../../widgets/status_badge.dart';
+import '../../widgets/double_back_to_exit.dart';
 import '../chat/conversations_screen.dart';
 import '../profile/profile_screen.dart';
 import '../search/trade_tools_screen.dart';
@@ -217,7 +218,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
-    return Scaffold(
+    return DoubleBackToExit(child: Scaffold(
       appBar: AppBar(
         title: const Text('Importer Dashboard'),
         actions: [
@@ -382,7 +383,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
           },
         ),
       ),
-    );
+    ));
   }
 
   final _ordersKey = GlobalKey();

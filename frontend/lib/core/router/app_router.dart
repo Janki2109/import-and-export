@@ -105,14 +105,15 @@ GoRouter buildRouter(AuthProvider auth) {
         return loc == '/create-company' ? null : '/create-company';
       }
 
-      // BUG FIX (Journey 2 — KYC gate): previously gated only on a KYC row existing
-      // (auth.kycSubmitted), so a pending or rejected user passed straight through to the
-      // dashboard after submitting once. Now requires actual admin approval ('verified').
+      // Gate on a KYC row existing, not on admin approval — submitting once lets the user
+      // into the dashboard (with full access unlocked only after the admin marks it
+      // 'verified', enforced by individual screens/backend); admin review happens in the
+      // background rather than blocking navigation.
       if (!isAdmin && auth.kycStatus == null && auth.kycSubmitted == null) {
         // Not checked yet — wait rather than treating as "not done".
         return null;
       }
-      final kycDone = isAdmin || (auth.kycStatus == 'verified');
+      final kycDone = isAdmin || (auth.kycSubmitted == true);
       if (!kycDone) {
         return loc == '/kyc-onboarding' ? null : '/kyc-onboarding';
       }

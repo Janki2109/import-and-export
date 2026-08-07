@@ -57,9 +57,26 @@ func (s *ProductService) Search(ctx context.Context, query string) ([]models.Pro
 }
 
 func (s *ProductService) Update(ctx context.Context, id string, in UpsertProductInput) error {
-	isActive := true
+	// SECURITY FIX (M-20): previously defaulted is_active to TRUE whenever the request omitted
+	// it — after an admin deactivated a policy-violating listing, ANY subsequent PUT
+	// /products/:id by the exporter (even one just fixing a typo, with no intent to reactivate
+	// it) silently undid that moderation with no admin action or notification. Now preserves the
+	// product's current is_active unless the request explicitly specifies a new value.
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	isActive := existing.IsActive
 	if in.IsActive != nil {
 		isActive = *in.IsActive
+	}
+	// BUG FIX (M-21): Update skipped the same MinOrderQty normalization Create applies — a
+	// product created with MOQ 500 silently dropped to MOQ 0 the moment the exporter edited its
+	// price (or anything else) without also re-specifying min_order_qty, after which importers
+	// could order any quantity at all.
+	minQty := in.MinOrderQty
+	if minQty <= 0 {
+		minQty = 1
 	}
 	p := &models.Product{
 		ID:          id,
@@ -69,7 +86,7 @@ func (s *ProductService) Update(ctx context.Context, id string, in UpsertProduct
 		Description: in.Description,
 		Unit:        in.Unit,
 		UnitPrice:   in.UnitPrice,
-		MinOrderQty: in.MinOrderQty,
+		MinOrderQty: minQty,
 		ImageURL:    in.ImageURL,
 		IsActive:    isActive,
 	}

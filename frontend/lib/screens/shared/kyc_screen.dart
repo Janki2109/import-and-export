@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +16,18 @@ import '../../services/upload_service.dart';
 /// to S3 via a presigned URL, then the resulting URL is submitted with /kyc/submit.
 /// Doubles as the onboarding step (Create Company -> KYC -> Dashboard) and as a
 /// later editable screen from the dashboard menu.
+///
+/// DEVELOPMENT-MODE POLICY: uploading a document is sufficient by itself — PAN/GST/IEC
+/// numbers and bank account details are all optional free text, never required, and
+/// nothing about OCR ever blocks submission. Admin verifies by reviewing the uploaded
+/// document image directly, not by trusting a typed/extracted number.
+///
+/// OCR (Google ML Kit, on-device) still runs in the background as each document is
+/// uploaded, purely as a convenience: if it finds a clean match for the number, it
+/// fills the field in for you. If it doesn't, the field is simply left blank — there is
+/// no failure message, no red error, and the user is never asked to "fix" anything. See
+/// [_NumberFormat] / [_OcrIdField] for the (entirely optional) extraction logic, kept
+/// around so real OCR/manual-entry validation can be turned on later without a rewrite.
 class KYCScreen extends ConsumerStatefulWidget {
   const KYCScreen({super.key});
   @override
@@ -89,6 +102,7 @@ class _KYCScreenState extends ConsumerState<KYCScreen> {
         bankAccountHolderName: _bankAccountHolderNameCtrl.text.trim().isEmpty ? null : _bankAccountHolderNameCtrl.text.trim(),
         bankAccountNumber: _bankAccountNumberCtrl.text.trim().isEmpty ? null : _bankAccountNumberCtrl.text.trim(),
         bankIfsc: _bankIfscCtrl.text.trim().isEmpty ? null : _bankIfscCtrl.text.trim(),
+        bankDocUrl: docUrls['bank'] ?? _status?['bank_doc_url'],
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -163,24 +177,19 @@ class _KYCForm extends StatefulWidget {
 }
 
 class _KYCFormState extends State<_KYCForm> {
-  final Map<String, String?> _docUrls = {'pan': null, 'gst': null, 'iec': null, 'address': null};
-  final _formKey = GlobalKey<FormState>();
-
-  static final _panRegex = RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$');
-  static final _gstRegex = RegExp(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$');
-  static final _ifscRegex = RegExp(r'^[A-Z]{4}0[A-Z0-9]{6}$');
+  final Map<String, String?> _docUrls = {'pan': null, 'gst': null, 'iec': null, 'address': null, 'bank': null};
 
   bool get _hasAnyDocument {
     final hasFresh = _docUrls.values.any((v) => v != null);
     final hasExisting = (widget.status?['pan_doc_url'] != null) ||
         (widget.status?['gst_doc_url'] != null) ||
         (widget.status?['iec_doc_url'] != null) ||
-        (widget.status?['address_doc_url'] != null);
+        (widget.status?['address_doc_url'] != null) ||
+        (widget.status?['bank_doc_url'] != null);
     return hasFresh || hasExisting;
   }
 
   void _handleSubmit() {
-    if (!_formKey.currentState!.validate()) return;
     if (!_hasAnyDocument) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please upload at least one document.'), backgroundColor: AppColors.error),
@@ -195,9 +204,7 @@ class _KYCFormState extends State<_KYCForm> {
     final status = widget.status?['status'] as String?;
     final isVerified = status == 'verified';
 
-    return Form(
-      key: _formKey,
-      child: Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _StatusBanner(status: status, rejectionReason: widget.status?['rejection_reason']),
@@ -206,16 +213,12 @@ class _KYCFormState extends State<_KYCForm> {
           icon: Icons.badge_outlined,
           title: 'PAN Details',
           children: [
-            TextFormField(
+            _OcrIdField(
               controller: widget.panNumberCtrl,
-              enabled: !isVerified,
-              textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'PAN Number', prefixIcon: Icon(Icons.badge_outlined)),
-              validator: (v) => (v == null || v.trim().isEmpty || !_panRegex.hasMatch(v.trim())) ? 'Enter a valid PAN (e.g. ABCDE1234F)' : null,
-            ),
-            const SizedBox(height: 10),
-            _DocPicker(
-              label: 'PAN Document',
+              label: 'PAN Number',
+              icon: Icons.badge_outlined,
+              docLabel: 'PAN Document',
+              format: _NumberFormat.pan,
               existingUrl: widget.status?['pan_doc_url'],
               enabled: !isVerified,
               onUploaded: (url) => setState(() => _docUrls['pan'] = url),
@@ -227,16 +230,12 @@ class _KYCFormState extends State<_KYCForm> {
           icon: Icons.receipt_long_outlined,
           title: 'GST Details',
           children: [
-            TextFormField(
+            _OcrIdField(
               controller: widget.gstNumberCtrl,
-              enabled: !isVerified,
-              textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'GST Number', prefixIcon: Icon(Icons.receipt_long_outlined)),
-              validator: (v) => (v == null || v.trim().isEmpty || !_gstRegex.hasMatch(v.trim())) ? 'Enter a valid GST number' : null,
-            ),
-            const SizedBox(height: 10),
-            _DocPicker(
-              label: 'GST Document',
+              label: 'GST Number',
+              icon: Icons.receipt_long_outlined,
+              docLabel: 'GST Document',
+              format: _NumberFormat.gst,
               existingUrl: widget.status?['gst_doc_url'],
               enabled: !isVerified,
               onUploaded: (url) => setState(() => _docUrls['gst'] = url),
@@ -248,15 +247,13 @@ class _KYCFormState extends State<_KYCForm> {
           icon: Icons.public_outlined,
           title: 'Import-Export Code (IEC)',
           children: [
-            TextFormField(
+            _OcrIdField(
               controller: widget.iecCodeCtrl,
-              enabled: !isVerified,
-              decoration: const InputDecoration(labelText: 'IEC Code', prefixIcon: Icon(Icons.public_outlined)),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 10),
-            _DocPicker(
-              label: 'IEC Document',
+              label: 'IEC Code',
+              icon: Icons.public_outlined,
+              docLabel: 'IEC Document',
+              // Post-2021, IEC = PAN, so the same 10-char pattern applies.
+              format: _NumberFormat.pan,
               existingUrl: widget.status?['iec_doc_url'],
               enabled: !isVerified,
               onUploaded: (url) => setState(() => _docUrls['iec'] = url),
@@ -271,7 +268,7 @@ class _KYCFormState extends State<_KYCForm> {
             TextFormField(
               controller: widget.businessLicenseCtrl,
               enabled: !isVerified,
-              decoration: const InputDecoration(labelText: 'Business License (Logistics only)', prefixIcon: Icon(Icons.home_work_outlined)),
+              decoration: const InputDecoration(labelText: 'Business License (Logistics only, optional)', prefixIcon: Icon(Icons.home_work_outlined)),
             ),
             const SizedBox(height: 10),
             _DocPicker(
@@ -287,27 +284,37 @@ class _KYCFormState extends State<_KYCForm> {
           icon: Icons.account_balance_outlined,
           title: 'Payout Bank Account',
           children: [
+            Text(
+              'Upload a cancelled cheque, passbook photo, or bank statement — that alone is enough. '
+              'Filling in the details below is optional.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5),
+            ),
+            const SizedBox(height: 10),
+            _DocPicker(
+              label: 'Bank Document (Cheque / Passbook / Statement)',
+              existingUrl: widget.status?['bank_doc_url'],
+              enabled: !isVerified,
+              onUploaded: (url) => setState(() => _docUrls['bank'] = url),
+            ),
+            const SizedBox(height: 10),
             TextFormField(
               controller: widget.bankAccountHolderNameCtrl,
               enabled: !isVerified,
-              decoration: const InputDecoration(labelText: 'Account Holder Name', prefixIcon: Icon(Icons.person_outline)),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+              decoration: const InputDecoration(labelText: 'Account Holder Name (optional)', prefixIcon: Icon(Icons.person_outline)),
             ),
             const SizedBox(height: 10),
             TextFormField(
               controller: widget.bankAccountNumberCtrl,
               enabled: !isVerified,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Account Number', prefixIcon: Icon(Icons.account_balance_outlined)),
-              validator: (v) => (v == null || v.trim().isEmpty || !RegExp(r'^[0-9]{6,20}$').hasMatch(v.trim())) ? 'Enter a valid account number' : null,
+              decoration: const InputDecoration(labelText: 'Account Number (optional)', prefixIcon: Icon(Icons.account_balance_outlined)),
             ),
             const SizedBox(height: 10),
             TextFormField(
               controller: widget.bankIfscCtrl,
               enabled: !isVerified,
               textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(labelText: 'IFSC Code', prefixIcon: Icon(Icons.pin_outlined)),
-              validator: (v) => (v == null || v.trim().isEmpty || !_ifscRegex.hasMatch(v.trim())) ? 'Enter a valid IFSC code' : null,
+              decoration: const InputDecoration(labelText: 'IFSC Code (optional)', prefixIcon: Icon(Icons.pin_outlined)),
             ),
           ],
         ),
@@ -320,7 +327,6 @@ class _KYCFormState extends State<_KYCForm> {
                 : Text(status == null || status == 'pending' ? 'Submit KYC' : 'Resubmit KYC'),
           ),
       ],
-      ),
     );
   }
 }
@@ -351,6 +357,13 @@ class _StatusBanner extends StatelessWidget {
           color: AppColors.error,
           title: 'KYC Rejected',
           subtitle: rejectionReason != null ? 'Reason: $rejectionReason. Please fix and resubmit.' : 'Please review and resubmit your documents.',
+        );
+      case 'needs_reupload':
+        return _banner(
+          icon: Icons.upload_file_outlined,
+          color: AppColors.warning,
+          title: 'Re-upload Requested',
+          subtitle: rejectionReason != null ? 'Admin requested: $rejectionReason' : 'The admin has asked you to re-upload one or more documents.',
         );
       case 'submitted':
       default:
@@ -424,15 +437,165 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
+/// Fixed-width ID-number layout (PAN/IEC = 10 chars, GST = 15) — the shape OCR
+/// extraction looks for once a matching pattern is being searched for. `digit` is true
+/// where that position must be 0-9, false where it must be A-Z, null where either is
+/// accepted (GST's entity-code and checksum characters). Not used for validation —
+/// see the class doc comment: numbers are optional free text during development.
+class _NumberFormat {
+  final int length;
+  final List<bool?> digitAt;
+  final RegExp validate;
+
+  const _NumberFormat({required this.length, required this.digitAt, required this.validate});
+
+  static final pan = _NumberFormat(
+    length: 10,
+    digitAt: const [false, false, false, false, false, true, true, true, true, false],
+    validate: RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]$'),
+  );
+
+  static final gst = _NumberFormat(
+    length: 15,
+    digitAt: const [true, true, false, false, false, false, false, true, true, true, true, false, null, false, null],
+    validate: RegExp(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'),
+  );
+}
+
+/// A single ID-number field wired to its document photo. The field is always optional
+/// and always editable — OCR is a pure convenience layer on top, never a gate: if it
+/// finds a clean (or fuzzily-correctable) match in the uploaded photo it fills the
+/// field in, and if it doesn't, the field is just left blank with no error shown.
+class _OcrIdField extends StatefulWidget {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final String docLabel;
+  final _NumberFormat format;
+  final String? existingUrl;
+  final bool enabled;
+  final void Function(String url) onUploaded;
+
+  const _OcrIdField({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    required this.docLabel,
+    required this.format,
+    required this.onUploaded,
+    this.existingUrl,
+    this.enabled = true,
+  });
+
+  @override
+  State<_OcrIdField> createState() => _OcrIdFieldState();
+}
+
+class _OcrIdFieldState extends State<_OcrIdField> {
+  void _applyOcrResult(String rawText) {
+    final match = _extractNumber(rawText, widget.format);
+    if (!mounted || match == null) return;
+    setState(() => widget.controller.text = match);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: widget.controller,
+          enabled: widget.enabled,
+          textCapitalization: TextCapitalization.characters,
+          decoration: InputDecoration(labelText: '${widget.label} (optional)', prefixIcon: Icon(widget.icon)),
+          // No validator: document upload alone is sufficient during development —
+          // see the KYCScreen doc comment.
+        ),
+        const SizedBox(height: 10),
+        _DocPicker(
+          label: widget.docLabel,
+          existingUrl: widget.existingUrl,
+          enabled: widget.enabled,
+          onUploaded: widget.onUploaded,
+          onTextExtracted: _applyOcrResult,
+        ),
+      ],
+    );
+  }
+}
+
+/// Common OCR letter/digit misreads, keyed by the class we need at that position.
+const _kOcrDigitFixes = {'O': '0', 'I': '1', 'L': '1', 'S': '5', 'B': '8', 'Z': '2', 'G': '6', 'Q': '0', 'D': '0'};
+const _kOcrLetterFixes = {'0': 'O', '1': 'I', '5': 'S', '8': 'B', '2': 'Z', '6': 'G'};
+
+/// Slides a [format.length]-wide window across the OCR text (stripped of
+/// whitespace/punctuation) looking for a substring matching [format]. Tries an exact
+/// match first, then retries with per-position correction of the most common OCR
+/// letter/digit confusions. Returns null on no match — the caller treats that as "OCR
+/// found nothing," which is a normal, unremarkable outcome, not a failure to surface.
+String? _extractNumber(String rawText, _NumberFormat format) {
+  final cleaned = rawText.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  if (cleaned.length < format.length) return null;
+
+  for (var i = 0; i <= cleaned.length - format.length; i++) {
+    final window = cleaned.substring(i, i + format.length);
+    if (format.validate.hasMatch(window)) return window;
+  }
+
+  for (var i = 0; i <= cleaned.length - format.length; i++) {
+    final window = cleaned.substring(i, i + format.length);
+    final buf = StringBuffer();
+    var changed = false;
+    for (var p = 0; p < format.length; p++) {
+      final ch = window[p];
+      final wantDigit = format.digitAt[p];
+      if (wantDigit == null) {
+        buf.write(ch);
+        continue;
+      }
+      final isDigit = RegExp(r'[0-9]').hasMatch(ch);
+      if (isDigit == wantDigit) {
+        buf.write(ch);
+      } else {
+        final fixed = wantDigit ? _kOcrDigitFixes[ch] : _kOcrLetterFixes[ch];
+        if (fixed == null) {
+          buf.write(ch);
+        } else {
+          buf.write(fixed);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      final corrected = buf.toString();
+      if (format.validate.hasMatch(corrected)) return corrected;
+    }
+  }
+
+  return null;
+}
+
 /// Picks an image (camera or gallery), uploads it to S3, and reports the resulting URL up.
 /// If a document was already submitted previously, shows a "View" link for it instead of
 /// a blank picker, so the user can see what's on file before choosing to replace it.
+///
+/// When [onTextExtracted] is supplied, also runs on-device OCR on the picked image in the
+/// background and reports the recognized text up if any is found. This never affects the
+/// upload: OCR success/failure is invisible to the user — the only status shown here is
+/// upload progress and "Document uploaded successfully".
 class _DocPicker extends StatefulWidget {
   final String label;
   final String? existingUrl;
   final bool enabled;
   final void Function(String url) onUploaded;
-  const _DocPicker({required this.label, this.existingUrl, this.enabled = true, required this.onUploaded});
+  final void Function(String text)? onTextExtracted;
+  const _DocPicker({
+    required this.label,
+    this.existingUrl,
+    this.enabled = true,
+    required this.onUploaded,
+    this.onTextExtracted,
+  });
 
   @override
   State<_DocPicker> createState() => _DocPickerState();
@@ -450,14 +613,21 @@ class _DocPickerState extends State<_DocPicker> {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
     if (picked == null) return;
 
+    final file = File(picked.path);
     setState(() {
-      _file = File(picked.path);
+      _file = file;
       _uploading = true;
       _uploadedUrl = null;
     });
 
+    // Fire-and-forget: OCR is a background convenience only. Errors are swallowed —
+    // it must never surface a message or affect the upload/submit flow either way.
+    if (widget.onTextExtracted != null) {
+      _runOcr(file).catchError((_) {});
+    }
+
     try {
-      final url = await _uploadService.uploadFile(category: 'kyc', file: _file!, contentType: 'image/jpeg');
+      final url = await _uploadService.uploadFile(category: 'kyc', file: file, contentType: 'image/jpeg');
       if (mounted) {
         setState(() => _uploadedUrl = url);
         widget.onUploaded(url);
@@ -466,6 +636,18 @@ class _DocPickerState extends State<_DocPicker> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: $e'), backgroundColor: AppColors.error));
     } finally {
       if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  Future<void> _runOcr(File file) async {
+    final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+    try {
+      final result = await recognizer.processImage(InputImage.fromFile(file));
+      if (mounted && result.text.trim().isNotEmpty) {
+        widget.onTextExtracted!(result.text);
+      }
+    } finally {
+      await recognizer.close();
     }
   }
 
@@ -498,7 +680,7 @@ class _DocPickerState extends State<_DocPicker> {
                 _uploading
                     ? 'Uploading...'
                     : hasFreshUpload
-                        ? '${widget.label} — uploaded'
+                        ? 'Document uploaded successfully'
                         : hasExisting
                             ? '${widget.label} — on file'
                             : widget.label,

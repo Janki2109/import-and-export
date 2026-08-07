@@ -37,6 +37,19 @@ func (s *QuotationService) Submit(ctx context.Context, in SubmitQuotationInput) 
 	if rfq.Status != models.RFQOpen && rfq.Status != models.RFQQuoted {
 		return nil, fmt.Errorf("rfq is no longer open for quotations")
 	}
+	// LOGIC FIX (H-18): Submit() never validated ValidityDate at all — a quotation could be
+	// submitted already expired (or with a garbage past date), guaranteed to fail Accept later
+	// with no clear reason why it can never be accepted.
+	if !in.ValidityDate.After(time.Now()) {
+		return nil, fmt.Errorf("validity date must be in the future")
+	}
+	// SECURITY FIX (M-15): rfq_targets was previously enforced only on the browse-listing
+	// endpoint (ListOpenForExporter), not here — any exporter who learned/guessed a targeted
+	// RFQ's ID directly could still submit a quotation against it, and the importer would then
+	// see quotes from companies they never invited to bid.
+	if visible, verr := s.rfqRepo.IsVisibleToExporter(ctx, in.RFQID, in.ExporterID); verr == nil && !visible {
+		return nil, fmt.Errorf("not authorized to quote on this rfq")
+	}
 
 	q := &models.Quotation{
 		RFQID:        in.RFQID,
@@ -84,10 +97,12 @@ func (s *QuotationService) Accept(ctx context.Context, quotationID, importerID s
 	if q.Status != models.QuotationPending {
 		return nil, fmt.Errorf("quotation is not pending (status: %s)", q.Status)
 	}
-	// BUG FIX (Journey 4): validity_date was stored and displayed but never enforced — an
-	// expired quotation (still 'pending', since nothing transitions it on expiry) could be
-	// accepted with no rejection at all.
-	if time.Now().After(q.ValidityDate) {
+	// BUG FIX (Journey 4 / H-18): validity_date is stored as a DATE (parsed as midnight UTC), so
+	// comparing with a bare time.Now().After(...) rejected the quotation for the WHOLE of its
+	// own last valid day (e.g. valid until 2026-08-03 was reported "expired" at 09:00 IST on
+	// 2026-08-03 itself, since that's already past midnight UTC on that date). The quotation
+	// remains acceptable through the end of its validity date.
+	if time.Now().After(q.ValidityDate.Add(24 * time.Hour)) {
 		return nil, fmt.Errorf("quotation expired on %s and can no longer be accepted", q.ValidityDate.Format("2006-01-02"))
 	}
 
@@ -97,6 +112,12 @@ func (s *QuotationService) Accept(ctx context.Context, quotationID, importerID s
 	}
 	if rfq.ImporterID != importerID {
 		return nil, fmt.Errorf("not authorized to accept this quotation")
+	}
+	// LOGIC FIX (M-14): Accept() never checked the RFQ's own status — a quotation on an
+	// already-closed/cancelled RFQ (e.g. another quotation on the same RFQ was already accepted)
+	// could still be accepted, producing a second order against a closed RFQ.
+	if rfq.Status == models.RFQClosed || rfq.Status == models.RFQCancelled {
+		return nil, fmt.Errorf("this rfq is no longer open (status: %s)", rfq.Status)
 	}
 
 	order, _, _, err := s.orderService.CreateOrder(ctx, CreateOrderInput{

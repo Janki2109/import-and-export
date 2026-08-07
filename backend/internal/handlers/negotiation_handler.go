@@ -110,9 +110,12 @@ func (h *NegotiationHandler) GetByQuotation(c *gin.Context) {
 }
 
 type counterOfferRequest struct {
-	UnitPrice         float64    `json:"unit_price" binding:"required"`
+	// BUG FIX (H-14): binding:"required" on a float64 only rejects zero, not negatives — a
+	// negative unit_price/quantity previously produced a negative total_price that flowed
+	// straight into orders.total_amount and a negative escrow credit ledger entry once accepted.
+	UnitPrice         float64    `json:"unit_price" binding:"required,gt=0"`
 	Currency          string     `json:"currency"`
-	Quantity          float64    `json:"quantity" binding:"required"`
+	Quantity          float64    `json:"quantity" binding:"required,gt=0"`
 	MOQ               *float64   `json:"moq"`
 	DeliveryDays      *int       `json:"delivery_days"`
 	DispatchDays      *int       `json:"dispatch_days"`

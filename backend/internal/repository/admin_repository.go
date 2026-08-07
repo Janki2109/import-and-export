@@ -255,7 +255,12 @@ func (r *AdminRepository) ListAllWallets(ctx context.Context) ([]AdminWalletRow,
 				SUM(e.payout_amount) FILTER (WHERE e.status = 'released') AS total_released
 			FROM escrow_payments e JOIN orders o ON o.id = e.order_id GROUP BY o.exporter_id
 		) esc ON esc.exporter_id = u.id
-		WHERE u.role IN ('importer', 'exporter', 'admin')
+		-- BUG FIX (M-29): previously excluded 'logistics' despite this function's own doc
+		-- comment ("importers/logistics/admins simply get 0" for the escrow columns) implying
+		-- logistics accounts were meant to appear here. Logistics users genuinely have wallets
+		-- and can file withdrawals — an admin approving one previously had no way to see the
+		-- balance it's drawn against.
+		WHERE u.role IN ('importer', 'exporter', 'admin', 'logistics')
 		ORDER BY u.role, u.full_name`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -320,9 +325,14 @@ func (r *AdminRepository) MarkWithdrawalPaid(ctx context.Context, requestID, adm
 	}
 	defer tx.Rollback(ctx)
 
+	// BUG FIX (H-21): previously the SELECT had no FOR UPDATE and the final UPDATE had no
+	// status guard (WHERE id = $3 only) — two concurrent approvals of the same request could
+	// both pass the initial "still pending" read before either write landed, both insert a
+	// full-amount debit, and both commit, debiting and paying the user twice out-of-band.
+	// RejectWithdrawal already guarded its UPDATE correctly; MarkWithdrawalPaid did not.
 	var userID string
 	var amount float64
-	err = tx.QueryRow(ctx, `SELECT user_id, amount FROM withdrawal_requests WHERE id = $1 AND status = 'pending'`, requestID).Scan(&userID, &amount)
+	err = tx.QueryRow(ctx, `SELECT user_id, amount FROM withdrawal_requests WHERE id = $1 AND status = 'pending' FOR UPDATE`, requestID).Scan(&userID, &amount)
 	if err != nil {
 		return fmt.Errorf("withdrawal request not found or already processed: %w", err)
 	}
@@ -336,10 +346,14 @@ func (r *AdminRepository) MarkWithdrawalPaid(ctx context.Context, requestID, adm
 		return fmt.Errorf("recording withdrawal debit: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `
+	cmd, err := tx.Exec(ctx, `
 		UPDATE withdrawal_requests SET status = 'paid', ledger_entry_id = $1, processed_by = $2, processed_at = now()
-		WHERE id = $3`, ledgerEntryID, adminID, requestID); err != nil {
+		WHERE id = $3 AND status = 'pending'`, ledgerEntryID, adminID, requestID)
+	if err != nil {
 		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("withdrawal request not found or already processed")
 	}
 	return tx.Commit(ctx)
 }

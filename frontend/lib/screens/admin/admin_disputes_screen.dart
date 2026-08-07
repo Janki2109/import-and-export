@@ -54,10 +54,15 @@ class _AdminDisputesScreenState extends State<AdminDisputesScreen> {
         ),
       ),
     );
-    if (confirmed != true || notesCtrl.text.trim().isEmpty) return;
+    if (confirmed != true || notesCtrl.text.trim().isEmpty) {
+      notesCtrl.dispose();
+      return;
+    }
+    final notes = notesCtrl.text.trim();
+    notesCtrl.dispose();
 
     try {
-      await _adminService.resolveDispute(disputeId, resolution, notesCtrl.text.trim());
+      await _adminService.resolveDispute(disputeId, resolution, notes);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dispute resolved'), backgroundColor: AppColors.success));
       _refresh();
     } catch (e) {

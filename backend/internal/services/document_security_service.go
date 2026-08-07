@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -37,7 +38,17 @@ func NewDocumentSecurityService(storageService storage.StorageService, signer *s
 // whoever asked for it, in dev or production alike.
 func (s *DocumentSecurityService) GenerateDownloadUrl(key, baseURL string) string {
 	token := s.signer.Sign(key, s.ttl)
-	return fmt.Sprintf("%s/api/v1/documents/secure/%s?token=%s&expires_in=%d", baseURL, key, token, int(s.ttl.Seconds()))
+	// BUG FIX (L-03): the key was previously interpolated raw into the URL path — a key
+	// containing '?', '#', '%' or a space would either break the HMAC verification on the way
+	// back (legitimate downloads 403ing) or silently drop/corrupt the "?token=" query string.
+	// url.PathEscape leaves '/' alone (multi-segment storage keys stay intact) while escaping
+	// everything else that would otherwise be ambiguous in a URL.
+	segments := strings.Split(key, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	escapedKey := strings.Join(segments, "/")
+	return fmt.Sprintf("%s/api/v1/documents/secure/%s?token=%s&expires_in=%d", baseURL, escapedKey, url.QueryEscape(token), int(s.ttl.Seconds()))
 }
 
 // secureURLPathPrefix — the path segment every URL from GenerateDownloadUrl contains, used by
@@ -62,6 +73,19 @@ const legacyUploadsPathPrefix = "/files/uploads/"
 // `/files/uploads/<key>` public path are transparently upgraded to a signed URL too (the key is
 // still recoverable from the path), which is what makes it safe to remove that route from the
 // router entirely — nothing legitimate needs it anymore, old or new.
+// unescapeKeyPath reverses GenerateDownloadUrl's per-segment url.PathEscape.
+func unescapeKeyPath(key string) (string, error) {
+	segments := strings.Split(key, "/")
+	for i, seg := range segments {
+		unescaped, err := url.PathUnescape(seg)
+		if err != nil {
+			return "", err
+		}
+		segments[i] = unescaped
+	}
+	return strings.Join(segments, "/"), nil
+}
+
 func (s *DocumentSecurityService) ResolveStoredValue(stored, baseURL string) string {
 	if stored == "" {
 		return stored
@@ -73,6 +97,11 @@ func (s *DocumentSecurityService) ResolveStoredValue(stored, baseURL string) str
 		key := rest
 		if q := strings.IndexByte(rest, '?'); q != -1 {
 			key = rest[:q]
+		}
+		// The key segment is now percent-escaped (see GenerateDownloadUrl's L-03 fix) — unescape
+		// each path segment back to the raw storage key before re-signing.
+		if unescaped, err := unescapeKeyPath(key); err == nil {
+			key = unescaped
 		}
 		return s.GenerateDownloadUrl(key, baseURL)
 	}

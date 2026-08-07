@@ -29,7 +29,7 @@ class AppConstants {
   /// WebSocket endpoint for real-time chat — same host as baseUrl. Uses wss:// when the
   /// base scheme is https, ws:// only in plain-http debug mode.
   static String get chatWsUrl {
-    final wsScheme = _scheme == 'https' ? 'wss' : 'ws';
+    const wsScheme = _scheme == 'https' ? 'wss' : 'ws';
     return '$wsScheme://$_host:$_port/api/v1/ws/chat';
   }
 

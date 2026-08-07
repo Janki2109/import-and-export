@@ -42,6 +42,9 @@ dependencies:
   # Image picking (KYC docs, POD upload)
   image_picker: ^1.1.2
 
+  # On-device OCR for KYC docs — auto-fills PAN/GST number fields from the uploaded photo
+  google_mlkit_text_recognition: ^0.13.1
+
   # Opening generated trade document PDFs, launching UPI payment deep links
   url_launcher: ^6.3.0
 

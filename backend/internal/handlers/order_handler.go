@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jayashri-infotech/onebharat-backend/internal/services"
@@ -14,6 +15,24 @@ type OrderHandler struct {
 
 func NewOrderHandler(orderService *services.OrderService) *OrderHandler {
 	return &OrderHandler{orderService: orderService}
+}
+
+// parseIntQuery — BUG FIX (M-28) helper: parses a pagination query param, falling back to
+// `def` if absent/invalid, and capping at `max` (0 = no cap) so callers can't request an
+// unbounded page size.
+func parseIntQuery(c *gin.Context, key string, def, max int) int {
+	v := c.Query(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
+	}
+	if max > 0 && n > max {
+		return max
+	}
+	return n
 }
 
 type createOrderRequest struct {
@@ -79,7 +98,13 @@ func (h *OrderHandler) ListMyOrders(c *gin.Context) {
 		statusPtr = &status
 	}
 
-	orders, err := h.orderService.ListMyOrders(c.Request.Context(), userID, role, statusPtr)
+	// BUG FIX (M-28): pagination was previously hardcoded to LIMIT 50 OFFSET 0 with no way to
+	// page — an importer/exporter with more than 50 orders had their oldest ones (including any
+	// open escrow on them) permanently invisible. limit/offset are now accepted as query params.
+	limit := parseIntQuery(c, "limit", 50, 200)
+	offset := parseIntQuery(c, "offset", 0, 0)
+
+	orders, err := h.orderService.ListMyOrders(c.Request.Context(), userID, role, statusPtr, limit, offset)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return

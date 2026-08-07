@@ -11,6 +11,7 @@ import '../../models/company.dart';
 import '../../models/order.dart';
 import '../../models/trade.dart';
 import '../../widgets/status_badge.dart';
+import '../../widgets/double_back_to_exit.dart';
 import '../chat/conversations_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shared/ads_screen.dart';
@@ -141,7 +142,7 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
-    return Scaffold(
+    return DoubleBackToExit(child: Scaffold(
       appBar: AppBar(
         // FittedBox scales the title down instead of truncating it, so the full
         // "Logistics Dashboard" text always stays visible even on narrow phones.
@@ -262,7 +263,7 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
           },
         ),
       ),
-    );
+    ));
   }
 }
 

@@ -38,7 +38,15 @@ func (s *ShipmentService) AssignLogistics(ctx context.Context, orderID, exporter
 	if order.Status != models.OrderPaymentHeld && order.Status != models.OrderAccepted {
 		return fmt.Errorf("cannot assign logistics: order status is %s", order.Status)
 	}
-	if blocked, missing, err := s.compliance.ShipmentBlockStatus(ctx, orderID, exporterID, models.RoleExporter); err == nil && blocked {
+	// FAIL-CLOSED FIX (M-22): previously "err == nil && blocked" meant any error from the
+	// compliance check silently SKIPPED it — the exact "BUG FIX (Journey 6)" this function's own
+	// comment says was being addressed. A lookup error now blocks assignment too, rather than
+	// defaulting to "assume compliant".
+	blocked, missing, cerr := s.compliance.ShipmentBlockStatus(ctx, orderID, exporterID, models.RoleExporter)
+	if cerr != nil {
+		return fmt.Errorf("could not verify compliance status, please retry: %w", cerr)
+	}
+	if blocked {
 		return fmt.Errorf("cannot assign logistics: mandatory compliance documents outstanding: %s", strings.Join(missing, ", "))
 	}
 	if err := s.shipmentRepo.AssignLogistics(ctx, orderID, logisticsID, trackingNumber, carrierName); err != nil {
@@ -65,11 +73,41 @@ var validShipmentStatuses = map[string]bool{
 	"exception":              true,
 }
 
+// shipmentStatusOrder — BUG FIX (M-26): the map above was accepted as-is with no ordering
+// check despite its own comment saying "in order" — a partner could previously post "delivered"
+// immediately after assignment (skipping straight to delivered_at set / order marked delivered
+// / POD unlocked with zero actual movement), or post an earlier stage AFTER a later one,
+// permanently desyncing shipment and order state. "exception" is intentionally excluded from
+// the ordering check — it can be reported at any stage.
+var shipmentStatusOrder = map[string]int{
+	"pickup_scheduled":       1,
+	"picked_up":              2,
+	"at_warehouse":           3,
+	"customs_clearance":      4,
+	"loaded":                 5,
+	"in_transit":             6,
+	"arrived_at_destination": 7,
+	"out_for_delivery":       8,
+	"delivered":              9,
+}
+
 // UpdateShipmentStatus — logistics-only, must own the shipment (enforced by the WHERE clause
 // in ShipmentRepository.UpdateStatus, not here).
 func (s *ShipmentService) UpdateShipmentStatus(ctx context.Context, shipmentID, logisticsID, status, location, remarks string) error {
 	if !validShipmentStatuses[status] {
 		return fmt.Errorf("invalid status: %s", status)
+	}
+	if newRank, ok := shipmentStatusOrder[status]; ok {
+		current, err := s.shipmentRepo.GetByID(ctx, shipmentID)
+		if err != nil {
+			return err
+		}
+		if currentRank, ok := shipmentStatusOrder[string(current.Status)]; ok && newRank < currentRank {
+			return fmt.Errorf("cannot move shipment status backward from %s to %s", current.Status, status)
+		}
+		if currentRank, ok := shipmentStatusOrder[string(current.Status)]; ok && newRank > currentRank+1 {
+			return fmt.Errorf("cannot skip shipment stages: current status is %s, next expected stage is required before %s", current.Status, status)
+		}
 	}
 	if err := s.shipmentRepo.UpdateStatus(ctx, shipmentID, status, location, remarks, logisticsID); err != nil {
 		return err

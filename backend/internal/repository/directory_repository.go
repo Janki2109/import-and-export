@@ -19,9 +19,16 @@ func NewDirectoryRepository(db *pgxpool.Pool) *DirectoryRepository {
 // with company profile (if completed) and KYC-verified status so exporters can judge
 // trustworthiness before sending a shipment request. query filters by name/company/city/country.
 func (r *DirectoryRepository) ListLogisticsPartners(ctx context.Context, query string) ([]models.LogisticsPartner, error) {
+	// BUG FIX (H-22): (k.status = 'verified') over a LEFT JOIN yields SQL NULL for any account
+	// with no kyc_details row (every newly-registered logistics account, until they submit KYC)
+	// — pgx cannot scan NULL into models.LogisticsPartner.KYCVerified's non-pointer bool, so
+	// this query errored out entirely for ALL callers the moment even one such account existed,
+	// killing the whole "Find Logistics Partner" screen. COALESCE to false fixes the scan; NULLS
+	// LAST (equivalent here since COALESCE removes the NULL, but kept explicit) ensures
+	// unverified partners don't rank above verified ones by accident of NULL-sort-order.
 	sql := `
 		SELECT u.id, u.full_name, c.company_name, c.city, c.country,
-			(k.status = 'verified') AS kyc_verified,
+			COALESCE(k.status = 'verified', false) AS kyc_verified,
 			COALESCE(ARRAY_AGG(DISTINCT f.vehicle_type) FILTER (WHERE f.vehicle_type IS NOT NULL), '{}')
 		FROM users u
 		LEFT JOIN companies c ON c.user_id = u.id
@@ -31,7 +38,7 @@ func (r *DirectoryRepository) ListLogisticsPartners(ctx context.Context, query s
 		  AND ($1 = '' OR u.full_name ILIKE '%' || $1 || '%' OR c.company_name ILIKE '%' || $1 || '%'
 		       OR c.city ILIKE '%' || $1 || '%' OR c.country ILIKE '%' || $1 || '%')
 		GROUP BY u.id, u.full_name, c.company_name, c.city, c.country, k.status
-		ORDER BY kyc_verified DESC, u.full_name`
+		ORDER BY kyc_verified DESC NULLS LAST, u.full_name`
 
 	rows, err := r.db.Query(ctx, sql, query)
 	if err != nil {
