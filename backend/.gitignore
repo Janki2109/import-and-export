@@ -1,5 +1,5 @@
 .env
-storage/
+/storage/
 secrets/
 *.exe
 *.log

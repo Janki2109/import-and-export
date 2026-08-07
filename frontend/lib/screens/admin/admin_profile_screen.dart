@@ -159,10 +159,10 @@ class _SettingsCard extends ConsumerWidget {
           const Divider(height: 1),
           _tile(context, Icons.language_outlined, 'Language', () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LanguageScreen(isSettingsChange: true)))),
           const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.dark_mode_outlined, color: AppColors.primary),
-            title: const Text('Dark Mode', style: TextStyle(fontWeight: FontWeight.w600)),
-            trailing: const ThemeToggleButton(),
+          const ListTile(
+            leading: Icon(Icons.dark_mode_outlined, color: AppColors.primary),
+            title: Text('Dark Mode', style: TextStyle(fontWeight: FontWeight.w600)),
+            trailing: ThemeToggleButton(),
           ),
           const Divider(height: 1),
           _tile(context, Icons.campaign_outlined, 'Notification Settings', () => _showStaticInfo(context, 'Notification Settings',

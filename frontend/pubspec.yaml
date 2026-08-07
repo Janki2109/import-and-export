@@ -101,6 +101,7 @@ flutter_launcher_icons:
 # Pinning record_linux to a release that matches fixes it.
 dependency_overrides:
   record_linux: ^1.3.1
+  record_web: ^1.3.0
 
 flutter:
   uses-material-design: true

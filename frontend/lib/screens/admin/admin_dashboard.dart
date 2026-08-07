@@ -592,19 +592,19 @@ class _AdminWelcomeCard extends ConsumerWidget {
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
+                const SizedBox(
                   width: 52,
                   height: 52,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      const CircularProgressIndicator(
+                      CircularProgressIndicator(
                         value: 1,
                         strokeWidth: 5,
                         backgroundColor: Colors.white24,
                         valueColor: AlwaysStoppedAnimation(Color(0xFF6FE3A5)),
                       ),
-                      const Text('100%', style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w800)),
+                      Text('100%', style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w800)),
                     ],
                   ),
                 ),

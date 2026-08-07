@@ -16,7 +16,7 @@ class AppConstants {
     'API_SCHEME',
     defaultValue: kDebugMode ? 'http' : 'https',
   );
-  static const int _port = 8081;
+  static const int _port = int.fromEnvironment('API_PORT', defaultValue: 8081);
 
   static String _host = _configuredHost;
   static const String _scheme = _configuredScheme;

@@ -284,7 +284,7 @@ class _KYCFormState extends State<_KYCForm> {
           icon: Icons.account_balance_outlined,
           title: 'Payout Bank Account',
           children: [
-            Text(
+            const Text(
               'Upload a cancelled cheque, passbook photo, or bank statement — that alone is enough. '
               'Filling in the details below is optional.',
               style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5),
