@@ -180,7 +180,7 @@ class OnboardingContent {
     OnboardingPageData(
       emoji: '🚚',
       title: 'Pickup Goods',
-      description: 'Collect the goods from the exporter and mark pickup complete.',
+      description: 'Collect the goods from the exporter and deliver them to the importer.',
       icon: Icons.inventory_2_outlined,
       scene: OnboardingSceneType.shipment,
       sceneIcon: Icons.local_shipping_outlined,

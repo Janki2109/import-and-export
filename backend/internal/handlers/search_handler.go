@@ -10,12 +10,13 @@ import (
 )
 
 type SearchHandler struct {
-	searchService *services.SearchService
-	aiService     *services.AISearchService
+	searchService       *services.SearchService
+	aiService           *services.AISearchService
+	exchangeRateService *services.ExchangeRateService
 }
 
-func NewSearchHandler(searchService *services.SearchService, aiService *services.AISearchService) *SearchHandler {
-	return &SearchHandler{searchService: searchService, aiService: aiService}
+func NewSearchHandler(searchService *services.SearchService, aiService *services.AISearchService, exchangeRateService *services.ExchangeRateService) *SearchHandler {
+	return &SearchHandler{searchService: searchService, aiService: aiService, exchangeRateService: exchangeRateService}
 }
 
 func (h *SearchHandler) SearchHSCodes(c *gin.Context) {
@@ -116,6 +117,19 @@ func (h *SearchHandler) CalculateLandedCost(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, breakdown)
+}
+
+// ExchangeRates — RFQ Pricing section's currency dropdown (INR/USD/EUR/AED) converts the
+// entered Target Price live off these rates instead of a hardcoded value. Rates are always
+// FROM 1 INR (e.g. {"INR":1,"USD":0.012,...}); the frontend converts any pair by routing
+// through INR as the anchor.
+func (h *SearchHandler) ExchangeRates(c *gin.Context) {
+	rates, err := h.exchangeRateService.LatestRates()
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"base": "INR", "rates": rates})
 }
 
 func (h *SearchHandler) AIProductSearch(c *gin.Context) {

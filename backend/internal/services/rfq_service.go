@@ -29,6 +29,7 @@ type CreateRFQInput struct {
 	TargetPrice        *float64
 	DestinationCountry string
 	Description        *string
+	ProductImageURL    *string
 	// TargetExporterIDs — Journey 3's "request quotation" from a specific company profile.
 	// Empty = unchanged open-marketplace broadcast behavior; non-empty = only these exporters
 	// (plus admin) see this RFQ.
@@ -46,6 +47,7 @@ func (s *RFQService) CreateRFQ(ctx context.Context, in CreateRFQInput) (*models.
 		TargetPrice:        in.TargetPrice,
 		DestinationCountry: in.DestinationCountry,
 		Description:        in.Description,
+		ProductImageURL:    in.ProductImageURL,
 		Status:             models.RFQOpen,
 	}
 	if err := s.rfqRepo.Create(ctx, rfq); err != nil {

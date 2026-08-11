@@ -25,6 +25,7 @@ type createRFQRequest struct {
 	TargetPrice        *float64 `json:"target_price"`
 	DestinationCountry string   `json:"destination_country" binding:"required"`
 	Description        *string  `json:"description"`
+	ProductImageURL    *string  `json:"product_image_url"`
 	// TargetExporterIDs — optional; when set, this RFQ is sent only to these exporters
 	// (Journey 3: "request quotation" from a specific company profile) instead of the open
 	// marketplace broadcast.
@@ -50,6 +51,7 @@ func (h *RFQHandler) CreateRFQ(c *gin.Context) {
 		TargetPrice:        req.TargetPrice,
 		DestinationCountry: req.DestinationCountry,
 		Description:        req.Description,
+		ProductImageURL:    req.ProductImageURL,
 		TargetExporterIDs:  req.TargetExporterIDs,
 	})
 	if err != nil {

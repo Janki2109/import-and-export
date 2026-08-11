@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/theme/app_theme.dart';
 import '../../providers/providers.dart';
 import 'auth_visuals.dart';
+import 'register_screen.dart' show RoleCard;
 
 const _rememberedEmailKey = 'remembered_login_email';
 final _emailRegex = RegExp(r'^[\w\.\-]+@[\w\-]+\.[a-zA-Z]{2,}$');
@@ -21,6 +22,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
   final _passwordCtrl = TextEditingController();
   bool _obscure = true;
   bool _rememberMe = false;
+  // Multi-role login — same email/password, but the selected role decides which role the
+  // account logs in as and which dashboard opens (see AuthProvider.login / backend
+  // AuthService.Login). Defaults to 'importer', same default as the Register screen's role
+  // picker this reuses (RoleCard).
+  String _role = 'importer';
 
   late final AnimationController _entrance;
   late final Animation<double> _fade;
@@ -67,7 +73,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
     }
 
     final auth = ref.read(authProvider);
-    final ok = await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
+    final ok = await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text, role: _role);
     if (!mounted) return;
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -164,7 +170,34 @@ class _LoginScreenState extends ConsumerState<LoginScreen> with SingleTickerProv
                                     const Text('Welcome Back', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: AuthColors.textPrimary)),
                                     const SizedBox(height: 6),
                                     const Text('Login to continue your global trade journey.', textAlign: TextAlign.center, style: TextStyle(color: AuthColors.textSecondary, fontSize: 13)),
-                                    const SizedBox(height: 26),
+                                    const SizedBox(height: 22),
+                                    const Text('Login as...', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AuthColors.textPrimary)),
+                                    const SizedBox(height: 12),
+                                    Row(
+                                      children: [
+                                        RoleCard(
+                                          selected: _role == 'importer',
+                                          label: 'Importer',
+                                          icon: Icons.shopping_cart_outlined,
+                                          onTap: () => setState(() => _role = 'importer'),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        RoleCard(
+                                          selected: _role == 'exporter',
+                                          label: 'Exporter',
+                                          icon: Icons.upload_outlined,
+                                          onTap: () => setState(() => _role = 'exporter'),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        RoleCard(
+                                          selected: _role == 'logistics',
+                                          label: 'Logistics\nPartner',
+                                          icon: Icons.local_shipping_outlined,
+                                          onTap: () => setState(() => _role = 'logistics'),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 22),
                                     TextFormField(
                                       controller: _emailCtrl,
                                       keyboardType: TextInputType.emailAddress,

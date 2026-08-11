@@ -223,6 +223,7 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			search.GET("/countries", h.Search.SearchCountries)
 			search.GET("/policies", h.Search.ListPolicies)
 			search.GET("/ai-product-search", h.Search.AIProductSearch)
+			search.GET("/exchange-rates", h.Search.ExchangeRates)
 		}
 
 		calculators := protected.Group("/calculators")
@@ -389,6 +390,7 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 		chat := protected.Group("/chat")
 		{
 			chat.GET("/support-contact", h.Chat.SupportContact)
+			chat.POST("/ai", h.Chat.AskAI)
 			chat.POST("/conversations", h.Chat.StartConversation)
 			chat.GET("/conversations", h.Chat.ListConversations)
 			chat.GET("/conversations/:id/messages", h.Chat.ListMessages)

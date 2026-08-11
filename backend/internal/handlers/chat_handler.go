@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -14,17 +15,19 @@ import (
 )
 
 type ChatHandler struct {
-	chatService *services.ChatService
-	hub         *services.ChatHub
-	jwtSecret   string
-	upgrader    websocket.Upgrader
+	chatService   *services.ChatService
+	aiChatService *services.AIChatService
+	hub           *services.ChatHub
+	jwtSecret     string
+	upgrader      websocket.Upgrader
 }
 
-func NewChatHandler(chatService *services.ChatService, hub *services.ChatHub, jwtSecret string) *ChatHandler {
+func NewChatHandler(chatService *services.ChatService, aiChatService *services.AIChatService, hub *services.ChatHub, jwtSecret string) *ChatHandler {
 	return &ChatHandler{
-		chatService: chatService,
-		hub:         hub,
-		jwtSecret:   jwtSecret,
+		chatService:   chatService,
+		aiChatService: aiChatService,
+		hub:           hub,
+		jwtSecret:     jwtSecret,
 		upgrader: websocket.Upgrader{
 			// Mobile app clients only (no browser CORS concerns) — origin check not meaningful here.
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -53,15 +56,54 @@ func (h *ChatHandler) StartConversation(c *gin.Context) {
 	response.Success(c, http.StatusOK, conv)
 }
 
-// SupportContact — returns the platform admin's user id/name so the client can start (or
-// jump into) a "Contact Support" conversation without the user needing to know an admin's ID.
+// SupportContact — returns the platform admin's user id/display name so the client can start
+// (or jump into) a "Help & Support" conversation without the user needing to know an admin's ID.
 func (h *ChatHandler) SupportContact(c *gin.Context) {
 	admin, err := h.chatService.SupportContact(c.Request.Context())
 	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	response.Success(c, http.StatusOK, gin.H{"user_id": admin.ID, "full_name": admin.FullName})
+	// models.User has no gender field today, so this always resolves to the fallback name —
+	// see supportDisplayName's doc comment.
+	response.Success(c, http.StatusOK, gin.H{"user_id": admin.ID, "full_name": supportDisplayName(nil)})
+}
+
+// supportDisplayName — Priya (female support persona), Shiv (male), or "OneBharat Support" as
+// a graceful fallback when gender isn't known. There's no gender field captured anywhere in
+// this system today, so this always resolves to the fallback in practice; written this way so
+// it works correctly without further backend changes if gender data is ever added.
+func supportDisplayName(gender *string) string {
+	if gender != nil {
+		switch strings.ToLower(strings.TrimSpace(*gender)) {
+		case "female":
+			return "Priya"
+		case "male":
+			return "Shiv"
+		}
+	}
+	return "OneBharat Support"
+}
+
+type askAIRequest struct {
+	Message string `json:"message" binding:"required"`
+}
+
+// AskAI — the Chat screen's "AI Trade Assistant" option. Stateless request/response (no
+// conversation row, no WebSocket) — the Groq API key never reaches the client, only the reply
+// text does.
+func (h *ChatHandler) AskAI(c *gin.Context) {
+	var req askAIRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	reply, err := h.aiChatService.Ask(c.Request.Context(), req.Message)
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"reply": reply})
 }
 
 func (h *ChatHandler) ListConversations(c *gin.Context) {

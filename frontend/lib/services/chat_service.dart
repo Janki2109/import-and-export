@@ -56,6 +56,13 @@ class ChatService {
   Future<void> markRead(String conversationId) async {
     await _client.post('/chat/conversations/$conversationId/read');
   }
+
+  /// AI Trade Assistant — stateless request/response via the backend's Groq wrapper. The
+  /// GROQ_API_KEY itself never reaches the client; only the reply text does.
+  Future<String> askAI(String message) async {
+    final res = await _client.post('/chat/ai', data: {'message': message});
+    return res.data['data']['reply'] as String;
+  }
 }
 
 /// Wraps a single WebSocket connection for the lifetime of an open chat screen.

@@ -19,23 +19,23 @@ func NewRFQRepository(db *pgxpool.Pool) *RFQRepository {
 
 func (r *RFQRepository) Create(ctx context.Context, rfq *models.RFQ) error {
 	query := `INSERT INTO rfqs (rfq_number, importer_id, product_name, hsn_code, quantity, unit,
-		target_price, destination_country, description, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		target_price, destination_country, description, product_image_url, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING id, created_at, updated_at`
 	return r.db.QueryRow(ctx, query,
 		rfq.RFQNumber, rfq.ImporterID, rfq.ProductName, rfq.HSNCode, rfq.Quantity, rfq.Unit,
-		rfq.TargetPrice, rfq.DestinationCountry, rfq.Description, rfq.Status,
+		rfq.TargetPrice, rfq.DestinationCountry, rfq.Description, rfq.ProductImageURL, rfq.Status,
 	).Scan(&rfq.ID, &rfq.CreatedAt, &rfq.UpdatedAt)
 }
 
 func (r *RFQRepository) GetByID(ctx context.Context, id string) (*models.RFQ, error) {
 	query := `SELECT id, rfq_number, importer_id, product_name, hsn_code, quantity, unit,
-		target_price, destination_country, description, status, created_at, updated_at
+		target_price, destination_country, description, product_image_url, status, created_at, updated_at
 		FROM rfqs WHERE id = $1`
 	var rfq models.RFQ
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&rfq.ID, &rfq.RFQNumber, &rfq.ImporterID, &rfq.ProductName, &rfq.HSNCode, &rfq.Quantity, &rfq.Unit,
-		&rfq.TargetPrice, &rfq.DestinationCountry, &rfq.Description, &rfq.Status, &rfq.CreatedAt, &rfq.UpdatedAt,
+		&rfq.TargetPrice, &rfq.DestinationCountry, &rfq.Description, &rfq.ProductImageURL, &rfq.Status, &rfq.CreatedAt, &rfq.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -49,7 +49,7 @@ func (r *RFQRepository) GetByID(ctx context.Context, id string) (*models.RFQ, er
 // ListOpen — browsed by exporters looking for RFQs to quote against.
 func (r *RFQRepository) ListOpen(ctx context.Context, limit, offset int) ([]models.RFQ, error) {
 	return r.list(ctx, `SELECT id, rfq_number, importer_id, product_name, hsn_code, quantity, unit,
-		target_price, destination_country, description, status, created_at, updated_at
+		target_price, destination_country, description, product_image_url, status, created_at, updated_at
 		FROM rfqs WHERE status = 'open' ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 }
 
@@ -67,7 +67,7 @@ func (r *RFQRepository) ListOpen(ctx context.Context, limit, offset int) ([]mode
 func (r *RFQRepository) ListOpenForExporter(ctx context.Context, exporterID string, limit, offset int) ([]models.RFQ, error) {
 	return r.list(ctx, `
 		SELECT r.id, r.rfq_number, r.importer_id, r.product_name, r.hsn_code, r.quantity, r.unit,
-			r.target_price, r.destination_country, r.description, r.status, r.created_at, r.updated_at
+			r.target_price, r.destination_country, r.description, r.product_image_url, r.status, r.created_at, r.updated_at
 		FROM rfqs r
 		WHERE r.status IN ('open', 'quoted')
 		AND (
@@ -111,7 +111,7 @@ func (r *RFQRepository) AddTargets(ctx context.Context, rfqID string, exporterID
 
 func (r *RFQRepository) ListByImporter(ctx context.Context, importerID string, limit, offset int) ([]models.RFQ, error) {
 	return r.list(ctx, `SELECT id, rfq_number, importer_id, product_name, hsn_code, quantity, unit,
-		target_price, destination_country, description, status, created_at, updated_at
+		target_price, destination_country, description, product_image_url, status, created_at, updated_at
 		FROM rfqs WHERE importer_id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset, importerID)
 }
 
@@ -127,7 +127,7 @@ func (r *RFQRepository) list(ctx context.Context, query string, args ...interfac
 		var rfq models.RFQ
 		if err := rows.Scan(
 			&rfq.ID, &rfq.RFQNumber, &rfq.ImporterID, &rfq.ProductName, &rfq.HSNCode, &rfq.Quantity, &rfq.Unit,
-			&rfq.TargetPrice, &rfq.DestinationCountry, &rfq.Description, &rfq.Status, &rfq.CreatedAt, &rfq.UpdatedAt,
+			&rfq.TargetPrice, &rfq.DestinationCountry, &rfq.Description, &rfq.ProductImageURL, &rfq.Status, &rfq.CreatedAt, &rfq.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

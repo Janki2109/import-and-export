@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gal/gal.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
@@ -14,9 +15,11 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/rfq_report_data.dart';
 import '../../providers/providers.dart';
+import '../../services/exchange_rate_service.dart';
 import '../../services/rfq_docx.dart';
 import '../../services/rfq_report_pdf.dart';
 import '../../services/trade_service.dart';
+import '../../services/upload_service.dart';
 
 /// Importer posts a Request For Quote — exporters browse open RFQs and respond with
 /// quotations. The actual submission still calls the same TradeService.createRFQ() with
@@ -58,6 +61,15 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
   String _currency = 'INR';
   String _incoterm = 'FOB';
 
+  // Currency conversion — a fixed base amount/currency is kept internally (req: "avoid
+  // compounding"), and every currency-dropdown switch recomputes the displayed value from
+  // that same base via the live exchange-rate table, rather than chaining previous
+  // (already-rounded) displayed values through further conversions.
+  final _exchangeRateService = ExchangeRateService();
+  double? _priceBaseAmount;
+  String _priceBaseCurrency = 'INR';
+  String? _lastConvertedText;
+
   // Section 4 — Shipping Details
   final _originCtrl = TextEditingController();
   final _countryCtrl = TextEditingController(); // destination — required, sent to backend
@@ -72,9 +84,24 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
   final _notesCtrl = TextEditingController();
 
   final _tradeService = TradeService();
+  final _uploadService = UploadService();
+  final _imagePicker = ImagePicker();
   final _reportKey = GlobalKey();
   bool _loading = false;
   bool _saving = false;
+
+  // Product Image — required (see class doc). Picked via Gallery or Camera, uploaded
+  // immediately (same presigned-upload flow as KYC/POD docs), then submitted as
+  // product_image_url alongside the rest of the RFQ.
+  File? _productImageFile;
+  String? _productImageUrl;
+  bool _uploadingImage = false;
+
+  // Certification document — required alongside the certification text (see Additional
+  // Requirements section). Same Gallery/Camera pick + upload flow as the product image.
+  File? _certificationImageFile;
+  String? _certificationImageUrl;
+  bool _uploadingCertificationImage = false;
 
   /// null = still editing form; set once POST /rfqs succeeds, with the real rfq_number
   /// and created_at the backend returned.
@@ -98,6 +125,9 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
       _packagingTypeCtrl.text = dup.packagingType;
       _targetPriceCtrl.text = dup.targetPrice;
       _currency = dup.currency;
+      _priceBaseAmount = double.tryParse(dup.targetPrice);
+      _priceBaseCurrency = dup.currency;
+      _lastConvertedText = dup.targetPrice;
       _incoterm = dup.incoterm;
       _originCtrl.text = dup.originCountry;
       _countryCtrl.text = dup.destinationCountry;
@@ -137,8 +167,193 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
       _qtyCtrl.text.trim().isNotEmpty,
       _unitCtrl.text.trim().isNotEmpty,
       _countryCtrl.text.trim().isNotEmpty,
+      _productImageUrl != null,
     ].where((v) => v).length;
-    return requiredFilled / 4;
+    return requiredFilled / 5;
+  }
+
+  /// Bottom sheet offering Gallery/Camera — shared by the product image and certification
+  /// document pickers below.
+  Future<ImageSource?> _pickImageSource() {
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take Photo'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Uploads the picked image via the same presigned-upload flow KYC/POD docs use
+  /// (category "rfq") and stores the resulting URL.
+  Future<void> _pickProductImage() async {
+    final source = await _pickImageSource();
+    if (source == null) return;
+
+    final picked = await _imagePicker.pickImage(source: source, imageQuality: 85);
+    if (picked == null) return;
+
+    final file = File(picked.path);
+    setState(() {
+      _productImageFile = file;
+      _uploadingImage = true;
+      _productImageUrl = null;
+    });
+
+    try {
+      final url = await _uploadService.uploadFile(category: 'rfq', file: file, contentType: 'image/jpeg');
+      if (mounted) setState(() => _productImageUrl = url);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Image upload failed: $e'), backgroundColor: AppColors.error));
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
+  /// Same Gallery/Camera + upload flow as the product image picker, for the required
+  /// certification document.
+  Future<void> _pickCertificationImage() async {
+    final source = await _pickImageSource();
+    if (source == null) return;
+
+    final picked = await _imagePicker.pickImage(source: source, imageQuality: 85);
+    if (picked == null) return;
+
+    final file = File(picked.path);
+    setState(() {
+      _certificationImageFile = file;
+      _uploadingCertificationImage = true;
+      _certificationImageUrl = null;
+    });
+
+    try {
+      final url = await _uploadService.uploadFile(category: 'rfq', file: file, contentType: 'image/jpeg');
+      if (mounted) setState(() => _certificationImageUrl = url);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Image upload failed: $e'), backgroundColor: AppColors.error));
+    } finally {
+      if (mounted) setState(() => _uploadingCertificationImage = false);
+    }
+  }
+
+  /// Currency dropdown handler — converts the Target Price live using the exchange-rate
+  /// service instead of just relabeling the currency. If the price field was edited since
+  /// the last conversion, that typed value (in the currency it was typed under) becomes the
+  /// new fixed base; otherwise the existing base is reused, so switching currencies back and
+  /// forth never compounds rounding error. Never blocks currency selection or RFQ creation —
+  /// if the live rate can't be fetched, the currency still switches and the previously
+  /// entered number is left as-is, with an error message shown.
+  Future<void> _onCurrencyChanged(String? newCurrency) async {
+    if (newCurrency == null || newCurrency == _currency) return;
+
+    final typed = _targetPriceCtrl.text.trim();
+    if (typed.isNotEmpty && typed != _lastConvertedText) {
+      _priceBaseAmount = double.tryParse(typed);
+      _priceBaseCurrency = _currency;
+    }
+
+    setState(() => _currency = newCurrency);
+    if (_priceBaseAmount == null) return;
+
+    try {
+      final rates = await _exchangeRateService.getRates();
+      final converted = _exchangeRateService.convert(_priceBaseAmount!, _priceBaseCurrency, newCurrency, rates);
+      final formatted = converted.toStringAsFixed(2);
+      if (mounted) {
+        setState(() {
+          _targetPriceCtrl.text = formatted;
+          _lastConvertedText = formatted;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not fetch live exchange rate — amount was not converted.'), backgroundColor: AppColors.error),
+        );
+      }
+    }
+  }
+
+  /// Required product image picker: shows an upload prompt, an in-progress state, or the
+  /// selected image preview with the option to replace it — same shape as the KYC doc
+  /// picker, tap always reopens the Gallery/Camera choice.
+  Widget _buildProductImagePicker() {
+    final hasImage = _productImageUrl != null;
+    return InkWell(
+      onTap: _uploadingImage ? null : _pickProductImage,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: hasImage ? AppColors.success : Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            if (_productImageFile != null)
+              ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(_productImageFile!, height: 40, width: 40, fit: BoxFit.cover))
+            else
+              Icon(hasImage ? Icons.check_circle_outline : Icons.add_a_photo_outlined, color: hasImage ? AppColors.success : AppColors.textSecondary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _uploadingImage ? 'Uploading...' : hasImage ? 'Product image added' : 'Add Product Image (required)',
+                style: TextStyle(color: hasImage ? AppColors.success : AppColors.textPrimary),
+              ),
+            ),
+            if (_uploadingImage) const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            if (hasImage && !_uploadingImage) const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Required certification document picker — identical shape to the product image picker.
+  Widget _buildCertificationImagePicker() {
+    final hasImage = _certificationImageUrl != null;
+    return InkWell(
+      onTap: _uploadingCertificationImage ? null : _pickCertificationImage,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: hasImage ? AppColors.success : Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            if (_certificationImageFile != null)
+              ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(_certificationImageFile!, height: 40, width: 40, fit: BoxFit.cover))
+            else
+              Icon(hasImage ? Icons.check_circle_outline : Icons.add_a_photo_outlined, color: hasImage ? AppColors.success : AppColors.textSecondary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _uploadingCertificationImage ? 'Uploading...' : hasImage ? 'Certification document added' : 'Upload Certification (required)',
+                style: TextStyle(color: hasImage ? AppColors.success : AppColors.textPrimary),
+              ),
+            ),
+            if (_uploadingCertificationImage) const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            if (hasImage && !_uploadingCertificationImage) const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Combines every "extra" section into the existing free-text `description` param —
@@ -157,6 +372,7 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
     if (_deadlineCtrl.text.trim().isNotEmpty) extras.add('Delivery Deadline: ${_deadlineCtrl.text.trim()}');
     if (_qualityCtrl.text.trim().isNotEmpty) extras.add('Quality Requirements: ${_qualityCtrl.text.trim()}');
     if (_certificationsCtrl.text.trim().isNotEmpty) extras.add('Certifications Required: ${_certificationsCtrl.text.trim()}');
+    if (_certificationImageUrl != null) extras.add('Certification Document: $_certificationImageUrl');
     extras.add('Inspection Required: ${_inspectionRequired ? 'Yes' : 'No'}');
     if (_packagingInstructionsCtrl.text.trim().isNotEmpty) extras.add('Packaging Instructions: ${_packagingInstructionsCtrl.text.trim()}');
     if (_notesCtrl.text.trim().isNotEmpty) extras.add('Additional Notes: ${_notesCtrl.text.trim()}');
@@ -200,6 +416,18 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
 
   Future<void> _showPreview() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_productImageUrl == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add a product image.'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
+    if (_certificationImageUrl == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload a certification document.'), backgroundColor: AppColors.error),
+      );
+      return;
+    }
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -252,6 +480,7 @@ class _CreateRFQScreenState extends ConsumerState<CreateRFQScreen> {
         targetPrice: _targetPriceCtrl.text.trim().isEmpty ? null : double.tryParse(_targetPriceCtrl.text),
         destinationCountry: _countryCtrl.text.trim(),
         description: _buildDescription().isEmpty ? null : _buildDescription(),
+        productImageUrl: _productImageUrl,
         targetExporterIds: widget.targetExporterId == null ? null : [widget.targetExporterId!],
       );
       if (mounted) {
@@ -424,7 +653,7 @@ Generated by ${AppConstants.appName}
                       const SizedBox(height: 12),
                       TextFormField(controller: _categoryCtrl, decoration: const InputDecoration(labelText: 'Product Category (optional)')),
                       const SizedBox(height: 12),
-                      OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.add_a_photo_outlined, size: 18), label: const Text('Add Product Image (optional)')),
+                      _buildProductImagePicker(),
                       const SizedBox(height: 12),
                       TextFormField(controller: _descriptionCtrl, decoration: const InputDecoration(labelText: 'Product Description (optional)'), maxLines: 3),
                     ],
@@ -469,7 +698,7 @@ Generated by ${AppConstants.appName}
                               initialValue: _currency,
                               decoration: const InputDecoration(labelText: 'Currency'),
                               items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                              onChanged: (v) => setState(() => _currency = v ?? 'INR'),
+                              onChanged: _onCurrencyChanged,
                             ),
                           ),
                         ],
@@ -519,7 +748,13 @@ Generated by ${AppConstants.appName}
                     children: [
                       TextFormField(controller: _qualityCtrl, decoration: const InputDecoration(labelText: 'Quality Requirements (optional)'), maxLines: 2),
                       const SizedBox(height: 12),
-                      TextFormField(controller: _certificationsCtrl, decoration: const InputDecoration(labelText: 'Certifications Required (optional)')),
+                      TextFormField(
+                        controller: _certificationsCtrl,
+                        decoration: const InputDecoration(labelText: 'Certifications Required'),
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildCertificationImagePicker(),
                       const SizedBox(height: 4),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,

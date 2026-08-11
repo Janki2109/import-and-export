@@ -93,12 +93,12 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String email, String password, {String? role}) async {
     isLoading = true;
     errorMessage = null;
     notifyListeners();
     try {
-      final (user, accessToken, refreshToken) = await _authService.login(email, password);
+      final (user, accessToken, refreshToken) = await _authService.login(email, password, role: role);
       await _storage.write(key: AppConstants.tokenKey, value: accessToken);
       await _storage.write(key: AppConstants.refreshTokenKey, value: refreshToken);
       await _storage.write(key: AppConstants.roleKey, value: roleToString(user.role));

@@ -76,24 +76,16 @@ func (s *ChatService) decryptContent(content *string) *string {
 // order — "Chat with Logistics" on the Order Details screen). Any role can additionally
 // message the platform admin directly (support chat) — that's how importers/exporters/
 // logistics reach "us".
+// allowedPair — chat is now support-only: trade-partner-to-trade-partner messaging
+// (importer<->exporter, exporter<->logistics, importer<->logistics) has been removed. The
+// only conversations allowed are between a user and platform support (an admin). This is the
+// single enforcement point for that rule — every existing entry point (StartConversation,
+// order details, negotiation screen, etc.) is covered without needing to touch each one.
 func allowedPair(roleA, roleB models.UserRole) bool {
 	if roleA == roleB {
 		return false
 	}
-	if roleA == models.RoleAdmin || roleB == models.RoleAdmin {
-		return true
-	}
-	pair := map[models.UserRole]bool{roleA: true, roleB: true}
-	if pair[models.RoleImporter] && pair[models.RoleExporter] {
-		return true
-	}
-	if pair[models.RoleExporter] && pair[models.RoleLogistics] {
-		return true
-	}
-	if pair[models.RoleImporter] && pair[models.RoleLogistics] {
-		return true
-	}
-	return false
+	return roleA == models.RoleAdmin || roleB == models.RoleAdmin
 }
 
 // StartOrGetConversation validates the role pairing before creating/returning the conversation.

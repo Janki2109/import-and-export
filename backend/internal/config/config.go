@@ -72,6 +72,11 @@ type Config struct {
 	GroqAPIKey string
 	GroqModel  string
 
+	// ExchangeRateAPIKey — exchangerate-api.com key used by ExchangeRateService for the RFQ
+	// Pricing section's live currency conversion (INR/USD/EUR/AED). Empty = conversion
+	// disabled server-side; the frontend handles that gracefully (falls back to no conversion).
+	ExchangeRateAPIKey string
+
 	FirebaseServiceAccountFile string // path to the downloaded service-account JSON key; empty = push sending disabled
 	FirebaseProjectID          string
 
@@ -191,6 +196,8 @@ func Load() *Config {
 
 		GroqAPIKey: getEnv("GROQ_API_KEY", ""),
 		GroqModel:  getEnv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+
+		ExchangeRateAPIKey: getEnv("EXCHANGE_RATE_API_KEY", ""),
 
 		FirebaseServiceAccountFile: getEnv("FIREBASE_SERVICE_ACCOUNT_FILE", ""),
 		FirebaseProjectID:          getEnv("FIREBASE_PROJECT_ID", ""),

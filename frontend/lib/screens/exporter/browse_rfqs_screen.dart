@@ -165,11 +165,20 @@ class _RFQCard extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
-                      child: const Icon(Icons.inventory_2_outlined, color: AppColors.primary, size: 24),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+                        child: rfq.productImageUrl != null
+                            ? Image.network(
+                                rfq.productImageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(Icons.inventory_2_outlined, color: AppColors.primary, size: 24),
+                              )
+                            : const Icon(Icons.inventory_2_outlined, color: AppColors.primary, size: 24),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -278,6 +287,19 @@ class _RFQCard extends StatelessWidget {
             children: [
               Text(rfq.productName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
               const SizedBox(height: 14),
+              if (rfq.productImageUrl != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.network(
+                    rfq.productImageUrl!,
+                    height: 160,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
               _row('RFQ Number', rfq.rfqNumber),
               if (rfq.hsnCode != null) _row('HS Code', rfq.hsnCode!),
               _row('Quantity', '${rfq.quantity} ${rfq.unit}'),

@@ -216,6 +216,15 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
                                             ),
                                         ],
                                       ),
+                                      if ((c.userAEmail ?? '').isNotEmpty || (c.userBEmail ?? '').isNotEmpty) ...[
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          [if ((c.userAEmail ?? '').isNotEmpty) c.userAEmail!, if ((c.userBEmail ?? '').isNotEmpty) c.userBEmail!].join(' · '),
+                                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
                                       const SizedBox(height: 6),
                                       Text(c.lastMessagePreview ?? 'No messages yet', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
                                       const SizedBox(height: 4),

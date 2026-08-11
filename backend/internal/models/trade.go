@@ -46,6 +46,7 @@ type RFQ struct {
 	TargetPrice        *float64  `json:"target_price,omitempty" db:"target_price"`
 	DestinationCountry string    `json:"destination_country" db:"destination_country"`
 	Description        *string   `json:"description,omitempty" db:"description"`
+	ProductImageURL    *string   `json:"product_image_url,omitempty" db:"product_image_url"`
 	Status             RFQStatus `json:"status" db:"status"`
 	CreatedAt          time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`

@@ -23,11 +23,15 @@ class AuthService {
     return res.data['data'];
   }
 
-  /// Returns (user, accessToken, refreshToken)
-  Future<(AppUser, String, String)> login(String email, String password) async {
+  /// Returns (user, accessToken, refreshToken). [role], when passed as one of
+  /// importer/exporter/logistics, logs the same account in under that role — see
+  /// AuthService.Login (backend) for the multi-role-login switch. Omitted = login as
+  /// whatever role the account already has (previous behavior).
+  Future<(AppUser, String, String)> login(String email, String password, {String? role}) async {
     final res = await _client.post('/auth/login', data: {
       'email': email,
       'password': password,
+      if (role != null) 'role': role,
     });
     final data = res.data['data'];
     final user = AppUser.fromJson(data['user']);

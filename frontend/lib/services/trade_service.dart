@@ -16,6 +16,7 @@ class TradeService {
     double? targetPrice,
     required String destinationCountry,
     String? description,
+    String? productImageUrl,
     List<String>? targetExporterIds,
   }) async {
     final res = await _client.post('/rfqs', data: {
@@ -26,6 +27,7 @@ class TradeService {
       'target_price': targetPrice,
       'destination_country': destinationCountry,
       'description': description,
+      'product_image_url': productImageUrl,
       'target_exporter_ids': targetExporterIds,
     });
     return RFQ.fromJson(res.data['data']);

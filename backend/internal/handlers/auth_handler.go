@@ -56,6 +56,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 type loginRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
+	// Role — optional; multi-role login lets the same account log in as importer, exporter,
+	// or logistics regardless of which role it was registered/last logged-in under. Omitted
+	// or empty = login as whatever role the account already has (previous behavior).
+	Role string `json:"role" binding:"omitempty,oneof=importer exporter logistics"`
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -65,7 +69,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, pair, err := h.authService.Login(c.Request.Context(), req.Email, req.Password, security.ExtractRequestMeta(c))
+	user, pair, err := h.authService.Login(c.Request.Context(), req.Email, req.Password, req.Role, security.ExtractRequestMeta(c))
 	if err != nil {
 		response.Error(c, http.StatusUnauthorized, err.Error())
 		return

@@ -9,6 +9,7 @@ class RFQ {
   final double? targetPrice;
   final String destinationCountry;
   final String? description;
+  final String? productImageUrl;
   final String status;
   final DateTime createdAt;
 
@@ -23,6 +24,7 @@ class RFQ {
     this.targetPrice,
     required this.destinationCountry,
     this.description,
+    this.productImageUrl,
     required this.status,
     required this.createdAt,
   });
@@ -38,6 +40,7 @@ class RFQ {
         targetPrice: (json['target_price'] as num?)?.toDouble(),
         destinationCountry: json['destination_country'],
         description: json['description'],
+        productImageUrl: json['product_image_url'],
         status: json['status'],
         createdAt: DateTime.parse(json['created_at']),
       );

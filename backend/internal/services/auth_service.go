@@ -83,11 +83,18 @@ type TokenPair struct {
 	RefreshToken string
 }
 
-// Login — unchanged request/response contract (email+password in, user+tokens out); the
-// additions are all internal: brute-force lockout, enriched login-history recording, device
-// tracking, and a "new device" security notification. None of this changes what the client
-// sends or receives, so the existing Flutter login flow needs zero changes.
-func (s *AuthService) Login(ctx context.Context, email, password string, meta security.RequestMeta) (*models.User, *TokenPair, error) {
+// Login — request/response contract is unchanged except for the new optional requestedRole
+// (email+password in, user+tokens out); the other additions are all internal: brute-force
+// lockout, enriched login-history recording, device tracking, and a "new device" security
+// notification.
+//
+// Multi-role login: one account (one email/password) can act as importer, exporter, or
+// logistics depending on which role is selected at login — requestedRole, when it's one of
+// those three AND the account isn't an admin, switches the account's stored role to match
+// before issuing tokens, so the JWT and every existing role-scoped query see the newly
+// selected role consistently. requestedRole == "" preserves the exact previous behavior
+// (login as whatever role the account already has) — admin accounts are never affected.
+func (s *AuthService) Login(ctx context.Context, email, password, requestedRole string, meta security.RequestMeta) (*models.User, *TokenPair, error) {
 	email = strings.ToLower(strings.TrimSpace(email)) // BUG FIX (L-05): case-insensitive email
 	maxAttempts := s.cfg.MaxFailedLoginAttempts
 	if maxAttempts <= 0 {
@@ -159,6 +166,20 @@ func (s *AuthService) Login(ctx context.Context, email, password string, meta se
 	}
 
 	record(&user.ID, true)
+
+	// Multi-role login — switch the account's stored role to the one selected at login,
+	// provided it's a legitimate business role and this isn't an admin account. Admins never
+	// have their role changed this way, and an empty/unrecognized requestedRole is a no-op,
+	// which is exactly the previous behavior (login as whatever role is already on file).
+	switch requestedRole {
+	case string(models.RoleImporter), string(models.RoleExporter), string(models.RoleLogistics):
+		if user.Role != models.RoleAdmin && user.Role != models.UserRole(requestedRole) {
+			if err := s.userRepo.UpdateRole(ctx, user.ID, models.UserRole(requestedRole)); err != nil {
+				return nil, nil, fmt.Errorf("switching role: %w", err)
+			}
+			user.Role = models.UserRole(requestedRole)
+		}
+	}
 
 	if s.deviceRepo != nil && meta.DeviceID != "" {
 		if device, isNew, derr := s.deviceRepo.Touch(ctx, user.ID, meta.DeviceID, "", "", meta.IP, meta.Country); derr == nil && device != nil && isNew && s.notification != nil {

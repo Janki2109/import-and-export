@@ -31,6 +31,7 @@ import 'browse_exporters_screen.dart';
 import 'create_order_screen.dart';
 import 'create_rfq_screen.dart';
 import 'my_rfqs_screen.dart';
+import 'rfq_details_screen.dart';
 
 /// Importer's home: shows their orders, lets them pay (escrow hold) and later
 /// confirm delivery (escrow release) once goods arrive. Redesigned to match the
@@ -893,7 +894,12 @@ class _RecentActivity extends StatelessWidget {
               const SizedBox(height: 12),
               const Text('Latest RFQs', style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
-              ...latestRfqs.take(3).map((r) => _activityRow(icon: Icons.request_quote_outlined, title: r.productName, status: r.status)),
+              ...latestRfqs.take(3).map((r) => _activityRow(
+                    icon: Icons.request_quote_outlined,
+                    title: r.productName,
+                    status: r.status,
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RFQDetailsScreen(rfq: r))),
+                  )),
             ],
             if (latestOrders.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -907,9 +913,9 @@ class _RecentActivity extends StatelessWidget {
     );
   }
 
-  Widget _activityRow({required IconData icon, required String title, required String status}) {
+  Widget _activityRow({required IconData icon, required String title, required String status, VoidCallback? onTap}) {
     final color = statusColor(status);
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
@@ -925,6 +931,8 @@ class _RecentActivity extends StatelessWidget {
         ],
       ),
     );
+    if (onTap == null) return row;
+    return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8), child: row);
   }
 }
 

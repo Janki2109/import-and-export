@@ -140,6 +140,16 @@ func (r *UserRepository) UpdatePasswordHash(ctx context.Context, userID, passwor
 	return err
 }
 
+// UpdateRole — multi-role login: the same account (one email/password) can act as importer,
+// exporter, or logistics depending on which role the user picks at login time. AuthService.
+// Login switches the account's single `role` column to whatever was selected (never touches
+// admin accounts), so every existing role-scoped query/notification stays consistent with
+// whichever role the user is currently logged in as.
+func (r *UserRepository) UpdateRole(ctx context.Context, userID string, role models.UserRole) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET role = $1 WHERE id = $2`, role, userID)
+	return err
+}
+
 // FlagAccount — marks an account as flagged for admin review (Part 7's fraud detection
 // output). Does not deactivate/restrict the account itself — flagging is a review signal,
 // not an automatic punishment.

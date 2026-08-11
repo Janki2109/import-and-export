@@ -124,21 +124,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> with SingleTick
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            _RoleCard(
+                            RoleCard(
                               selected: _role == 'importer',
                               label: 'Importer',
                               icon: Icons.shopping_cart_outlined,
                               onTap: () => setState(() => _role = 'importer'),
                             ),
                             const SizedBox(width: 10),
-                            _RoleCard(
+                            RoleCard(
                               selected: _role == 'exporter',
                               label: 'Exporter',
                               icon: Icons.upload_outlined,
                               onTap: () => setState(() => _role = 'exporter'),
                             ),
                             const SizedBox(width: 10),
-                            _RoleCard(
+                            RoleCard(
                               selected: _role == 'logistics',
                               label: 'Logistics\nPartner',
                               icon: Icons.local_shipping_outlined,
@@ -226,12 +226,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> with SingleTick
 }
 
 /// Premium role-selection card — gradient + white icon + elevation when selected.
-class _RoleCard extends StatelessWidget {
+class RoleCard extends StatelessWidget {
   final bool selected;
   final String label;
   final IconData icon;
   final VoidCallback onTap;
-  const _RoleCard({required this.selected, required this.label, required this.icon, required this.onTap});
+  const RoleCard({super.key, required this.selected, required this.label, required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {

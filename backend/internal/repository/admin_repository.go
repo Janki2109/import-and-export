@@ -681,9 +681,11 @@ type AdminConversationRow struct {
 	UserAID            string     `json:"user_a_id"`
 	UserAName          string     `json:"user_a_name"`
 	UserARole          string     `json:"user_a_role"`
+	UserAEmail         string     `json:"user_a_email"`
 	UserBID            string     `json:"user_b_id"`
 	UserBName          string     `json:"user_b_name"`
 	UserBRole          string     `json:"user_b_role"`
+	UserBEmail         string     `json:"user_b_email"`
 	LastMessagePreview *string    `json:"last_message_preview,omitempty"`
 	LastMessageAt      *time.Time `json:"last_message_at,omitempty"`
 	MessageCount       int        `json:"message_count"`
@@ -691,8 +693,12 @@ type AdminConversationRow struct {
 	CreatedAt          time.Time  `json:"created_at"`
 }
 
+// ListAllConversations — now every conversation is a user<->support (admin) one (trade-partner
+// direct chat was removed from ChatService.allowedPair), so this doubles as the Help & Support
+// admin view: user_a/user_b email was added (existing `email` column, no schema change) so the
+// admin can see who they're talking to beyond just a name/role, per the support requirements.
 func (r *AdminRepository) ListAllConversations(ctx context.Context) ([]AdminConversationRow, error) {
-	query := `SELECT c.id, a.id, a.full_name, a.role::text, b.id, b.full_name, b.role::text,
+	query := `SELECT c.id, a.id, a.full_name, a.role::text, a.email, b.id, b.full_name, b.role::text, b.email,
 		lm.content, c.last_message_at, COALESCE(mc.count, 0), c.is_archived, c.created_at
 		FROM conversations c
 		JOIN users a ON a.id = c.participant_one_id
@@ -713,7 +719,7 @@ func (r *AdminRepository) ListAllConversations(ctx context.Context) ([]AdminConv
 	var out []AdminConversationRow
 	for rows.Next() {
 		var row AdminConversationRow
-		if err := rows.Scan(&row.ID, &row.UserAID, &row.UserAName, &row.UserARole, &row.UserBID, &row.UserBName, &row.UserBRole,
+		if err := rows.Scan(&row.ID, &row.UserAID, &row.UserAName, &row.UserARole, &row.UserAEmail, &row.UserBID, &row.UserBName, &row.UserBRole, &row.UserBEmail,
 			&row.LastMessagePreview, &row.LastMessageAt, &row.MessageCount, &row.IsArchived, &row.CreatedAt); err != nil {
 			return nil, err
 		}

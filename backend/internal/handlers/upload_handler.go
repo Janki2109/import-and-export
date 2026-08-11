@@ -24,7 +24,7 @@ func NewUploadHandler(uploadService *services.UploadService, storageService stor
 }
 
 type presignUploadRequest struct {
-	Category    string `json:"category" binding:"required,oneof=kyc pod chat profile compliance milestone_proof"`
+	Category    string `json:"category" binding:"required,oneof=kyc pod chat profile compliance milestone_proof rfq"`
 	FileName    string `json:"file_name" binding:"required"`
 	ContentType string `json:"content_type" binding:"required"`
 }

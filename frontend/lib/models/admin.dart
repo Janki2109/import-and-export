@@ -655,9 +655,11 @@ class AdminConversationRow {
   final String userAId;
   final String userAName;
   final String userARole;
+  final String? userAEmail;
   final String userBId;
   final String userBName;
   final String userBRole;
+  final String? userBEmail;
   final String? lastMessagePreview;
   final DateTime? lastMessageAt;
   final int messageCount;
@@ -669,9 +671,11 @@ class AdminConversationRow {
     required this.userAId,
     required this.userAName,
     required this.userARole,
+    this.userAEmail,
     required this.userBId,
     required this.userBName,
     required this.userBRole,
+    this.userBEmail,
     this.lastMessagePreview,
     this.lastMessageAt,
     required this.messageCount,
@@ -684,9 +688,11 @@ class AdminConversationRow {
         userAId: json['user_a_id'],
         userAName: json['user_a_name'],
         userARole: json['user_a_role'],
+        userAEmail: json['user_a_email'],
         userBId: json['user_b_id'],
         userBName: json['user_b_name'],
         userBRole: json['user_b_role'],
+        userBEmail: json['user_b_email'],
         lastMessagePreview: json['last_message_preview'],
         lastMessageAt: json['last_message_at'] != null ? DateTime.parse(json['last_message_at']) : null,
         messageCount: json['message_count'] ?? 0,

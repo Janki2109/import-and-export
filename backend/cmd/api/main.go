@@ -123,6 +123,7 @@ func main() {
 	walletService := services.NewWalletService(walletRepo, userRepo, escrowRepo, kycRepo, notificationService)
 	searchService := services.NewSearchService(referenceRepo)
 	aiSearchService := services.NewAISearchService(referenceRepo, cfg)
+	exchangeRateService := services.NewExchangeRateService(cfg)
 	chatHub := services.NewChatHub()
 	// Journey 8 — "messages encrypted": reuses the same at-rest encryption secret already used
 	// for document storage (DOCUMENT_ENCRYPTION_KEY). nil cipher (key unset) means chat
@@ -138,6 +139,7 @@ func main() {
 		log.Println("⚠️  DOCUMENT_ENCRYPTION_KEY not set — chat messages will be stored in plaintext")
 	}
 	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher, documentSecurityService)
+	aiChatService := services.NewAIChatService(cfg)
 	uploadService := services.NewUploadService(storageService, documentSecurityService)
 	disputeService := services.NewDisputeService(disputeRepo, orderRepo, escrowRepo, userRepo, auditLogRepo, orderService, notificationService)
 	fleetService := services.NewFleetService(fleetRepo)
@@ -165,8 +167,8 @@ func main() {
 		Quotation:     handlers.NewQuotationHandler(quotationService),
 		Wallet:        handlers.NewWalletHandler(walletService),
 		Document:      handlers.NewDocumentHandler(documentService),
-		Search:        handlers.NewSearchHandler(searchService, aiSearchService),
-		Chat:          handlers.NewChatHandler(chatService, chatHub, cfg.JWTSecret),
+		Search:        handlers.NewSearchHandler(searchService, aiSearchService, exchangeRateService),
+		Chat:          handlers.NewChatHandler(chatService, aiChatService, chatHub, cfg.JWTSecret),
 		Upload:        handlers.NewUploadHandler(uploadService, storageService, virusScanner),
 		Dispute:       handlers.NewDisputeHandler(disputeService),
 		Fleet:         handlers.NewFleetHandler(fleetService),
