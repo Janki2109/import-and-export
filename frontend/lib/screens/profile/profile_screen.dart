@@ -10,7 +10,9 @@ import '../../models/user.dart';
 import '../../providers/providers.dart';
 import '../../services/company_service.dart';
 import '../../services/kyc_service.dart';
+import '../../services/chat_service.dart';
 import '../../services/profile_service.dart';
+import '../chat/chat_screen.dart';
 import '../onboarding/language_screen.dart';
 import '../shared/kyc_screen.dart';
 import 'change_password_screen.dart';
@@ -295,8 +297,7 @@ class _SettingsCard extends ConsumerWidget {
                 () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const OnboardingFlowScreen(isReplay: true)))),
             const Divider(height: 1),
           ],
-          _tile(context, Icons.help_outline, 'Help & Support', () => _showStaticInfo(context, 'Help & Support',
-              'Need help? Reach us anytime via the "Messages" tab and tap "Chat with Support" — the platform team typically replies within one business day.\n\nYou can also email support@onebharatexportimport.com.')),
+          _tile(context, Icons.help_outline, 'Help & Support', () => _openSupportChat(context)),
           const Divider(height: 1),
           _tile(context, Icons.privacy_tip_outlined, 'Privacy Policy', () => _showStaticInfo(context, 'Privacy Policy',
               'We collect only the information required to operate your account, KYC verification, and trade transactions. Your data is never sold to third parties. Documents you upload (KYC, PODs) are stored securely and only accessible to you and platform admins for verification purposes.')),
@@ -308,6 +309,26 @@ class _SettingsCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Help & Support — jumps straight into the existing support conversation with admin,
+  /// same call sequence as StartChatScreen's "Chat with Support" (getSupportContact ->
+  /// startConversation -> ChatScreen). No more info popup.
+  Future<void> _openSupportChat(BuildContext context) async {
+    final chatService = ChatService();
+    try {
+      final admin = await chatService.getSupportContact();
+      final conversationId = await chatService.startConversation(admin['user_id']!);
+      if (context.mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, otherUserName: admin['full_name'] ?? 'Support')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppColors.error));
+      }
+    }
   }
 
   Widget _tile(BuildContext context, IconData icon, String label, VoidCallback onTap, {Color? color}) {

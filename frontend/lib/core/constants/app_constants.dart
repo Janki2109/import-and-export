@@ -7,7 +7,7 @@ class AppConstants {
   // AppConstants.resolveNetwork() probes this at startup and automatically falls back to
   // 10.0.2.2 (Android emulator's alias for the host machine) or localhost (iOS simulator)
   // if this address isn't reachable — see resolveNetwork() below.
-  static const String _lanIp = '192.168.1.6';
+  static const String _lanIp = '192.168.1.11';
   // Production backend, deployed on Render — used as the release-build default so a
   // plain `flutter build apk --release` (no --dart-define overrides) points at the live
   // API rather than a developer's LAN IP.

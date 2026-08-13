@@ -11,6 +11,7 @@ import (
 	"github.com/jayashri-infotech/onebharat-backend/internal/config"
 	"github.com/jayashri-infotech/onebharat-backend/internal/cron"
 	"github.com/jayashri-infotech/onebharat-backend/internal/handlers"
+	"github.com/jayashri-infotech/onebharat-backend/internal/middleware"
 	"github.com/jayashri-infotech/onebharat-backend/internal/repository"
 	"github.com/jayashri-infotech/onebharat-backend/internal/routes"
 	"github.com/jayashri-infotech/onebharat-backend/internal/services"
@@ -193,6 +194,11 @@ func main() {
 	}
 
 	r := gin.Default()
+	// Flutter web (Chrome) calls this API cross-origin — without CORS headers the browser
+	// blocks every request before it reaches a handler. Registered before routes.Register so
+	// every route (including the two static ones below) gets it, same reasoning as the
+	// SecurityHeaders middleware-ordering fix a few lines down.
+	r.Use(middleware.CORS())
 	// SECURITY FIX (H-04): Gin trusts X-Forwarded-For from ANY client by default when no
 	// trusted proxies are configured — the rate limiter (and login_attempts.ip_address, and the
 	// security dashboard) key off c.ClientIP(), which previously took whatever the request

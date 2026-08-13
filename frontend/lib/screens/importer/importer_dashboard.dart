@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -285,6 +286,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
                 SliverToBoxAdapter(
                   child: _WelcomeCard(
                     name: auth.currentUser?.fullName ?? 'Importer',
+                    avatarUrl: auth.currentUser?.avatarUrl,
                     companyName: auth.currentUser?.companyName,
                     country: b?.country,
                     verified: b?.kycVerified ?? false,
@@ -463,6 +465,7 @@ class _ProfileMenuButton extends ConsumerWidget {
 /// Same layout/animation as the Exporter Dashboard's welcome card.
 class _WelcomeCard extends StatelessWidget {
   final String name;
+  final String? avatarUrl;
   final String? companyName;
   final String? country;
   final bool verified;
@@ -470,6 +473,7 @@ class _WelcomeCard extends StatelessWidget {
   final VoidCallback onCompleteProfile;
   const _WelcomeCard({
     required this.name,
+    this.avatarUrl,
     this.companyName,
     this.country,
     required this.verified,
@@ -502,7 +506,10 @@ class _WelcomeCard extends StatelessWidget {
             CircleAvatar(
               radius: 28,
               backgroundColor: Colors.white.withValues(alpha: 0.2),
-              child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+              backgroundImage: avatarUrl != null ? CachedNetworkImageProvider(avatarUrl!) : null,
+              child: avatarUrl == null
+                  ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800))
+                  : null,
             ),
             const SizedBox(width: 14),
             Expanded(

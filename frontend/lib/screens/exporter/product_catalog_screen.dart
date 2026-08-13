@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/platform.dart';
 import '../../services/platform_service.dart';
+import 'product_detail_screen.dart';
 
 class ProductCatalogScreen extends StatefulWidget {
   const ProductCatalogScreen({super.key});
@@ -127,6 +128,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
                   child: ListTile(
                     title: Text(p.name),
                     subtitle: Text('₹${p.unitPrice.toStringAsFixed(2)}/${p.unit} · MOQ ${p.minOrderQty.toStringAsFixed(0)}'),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProductDetailScreen(product: p))),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, color: AppColors.error),
                       onPressed: () async {

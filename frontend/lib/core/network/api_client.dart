@@ -30,8 +30,12 @@ class ApiClient {
   ApiClient._internal() {
     dio = Dio(BaseOptions(
       baseUrl: AppConstants.baseUrl,
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
+      // Render's free-tier backend routinely takes 10-15s+ to respond (and 30-60s on a cold
+      // start after idle) — the previous 15s timeout was right at that edge, so slow-but-valid
+      // responses were being cut off and surfacing as a generic "Something went wrong" instead
+      // of actually completing.
+      connectTimeout: const Duration(seconds: 45),
+      receiveTimeout: const Duration(seconds: 45),
       headers: {'Content-Type': 'application/json'},
     ));
 
