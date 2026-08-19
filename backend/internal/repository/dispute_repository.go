@@ -81,7 +81,7 @@ func (r *DisputeRepository) list(ctx context.Context, query string, args ...inte
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // BUG FIX (Journey 7): previously updated by id alone with no status guard — the service-layer

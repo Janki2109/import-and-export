@@ -54,5 +54,5 @@ func (r *DirectoryRepository) ListLogisticsPartners(ctx context.Context, query s
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, rows.Err()
 }

@@ -2,27 +2,24 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 
 class AppConstants {
-  // Physical device testing — phone and PC must be on the same Wi-Fi network.
-  // This is the dev machine's LAN IP; update it if the machine's IP changes (DHCP).
-  // AppConstants.resolveNetwork() probes this at startup and automatically falls back to
-  // 10.0.2.2 (Android emulator's alias for the host machine) or localhost (iOS simulator)
-  // if this address isn't reachable — see resolveNetwork() below.
-  static const String _lanIp = '192.168.1.11';
   // Production backend, deployed on Render — used as the release-build default so a
   // plain `flutter build apk --release` (no --dart-define overrides) points at the live
   // API rather than a developer's LAN IP.
   static const String _prodHost = 'import-and-export-1.onrender.com';
+  // Both debug (`flutter run`) and release builds default to the deployed Render backend —
+  // pass --dart-define=API_HOST=<lan-ip> --dart-define=API_SCHEME=http --dart-define=API_PORT=8081
+  // to point a debug run at a local backend instead.
   static const String _configuredHost = String.fromEnvironment(
     'API_HOST',
-    defaultValue: kDebugMode ? _lanIp : _prodHost,
+    defaultValue: _prodHost,
   );
   static const String _configuredScheme = String.fromEnvironment(
     'API_SCHEME',
-    defaultValue: kDebugMode ? 'http' : 'https',
+    defaultValue: 'https',
   );
   // Render serves the production backend on the standard HTTPS port (443, implicit);
   // only local dev (the LAN-IP backend above) runs on the explicit 8081 port.
-  static const int _port = int.fromEnvironment('API_PORT', defaultValue: kDebugMode ? 8081 : 443);
+  static const int _port = int.fromEnvironment('API_PORT', defaultValue: 443);
 
   static String _host = _configuredHost;
   static const String _scheme = _configuredScheme;
@@ -60,7 +57,17 @@ class AppConstants {
       return;
     }
 
-    final fallback = Platform.isAndroid ? '10.0.2.2' : (Platform.isIOS ? 'localhost' : null);
+    // BUG FIX (L-8): Platform.isAndroid/isIOS (dart:io) throws UnsupportedError on Flutter web —
+    // release web builds return early above and never reach this line, but a DEBUG web build
+    // whose configured host becomes unreachable (network blip, backend down) would throw here
+    // uncaught. Guarded so web debug builds fall back to "no emulator alias" (null) instead of
+    // throwing, exactly like a physical device with no fallback available.
+    String? fallback;
+    try {
+      fallback = Platform.isAndroid ? '10.0.2.2' : (Platform.isIOS ? 'localhost' : null);
+    } catch (_) {
+      fallback = null;
+    }
     if (fallback != null && await _reachable(fallback)) {
       _host = fallback;
       if (kDebugMode) {

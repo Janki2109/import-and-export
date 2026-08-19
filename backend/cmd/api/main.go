@@ -113,7 +113,7 @@ func main() {
 	}
 	complianceService := services.NewComplianceService(complianceRepo, orderRepo, companyRepo, shipmentRepo, notificationService, documentSecurityService)
 	stripeClient := stripe.NewClient(cfg.StripeSecretKey)
-	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, paymentTermsRepo, cfg, notificationService, complianceService, stripeClient)
+	orderService := services.NewOrderService(orderRepo, escrowRepo, auditLogRepo, disputeRepo, kycRepo, paymentTermsRepo, userRepo, cfg, notificationService, complianceService, stripeClient)
 	negotiationService := services.NewNegotiationService(negotiationRepo, rfqRepo, quotationRepo, auditLogRepo, notificationService)
 	paymentTermsService := services.NewPaymentTermsService(paymentTermsRepo, orderRepo, escrowRepo, auditLogRepo, notificationService, documentSecurityService)
 	razorpayClient := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)

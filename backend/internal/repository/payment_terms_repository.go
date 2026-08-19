@@ -120,8 +120,20 @@ func (r *PaymentTermsRepository) GetMilestone(ctx context.Context, id string) (*
 
 // MarkPaid — importer self-declares payment for this milestone (mirrors the existing
 // self-declared ConfirmPaymentDone flow, no gateway integration).
-func (r *PaymentTermsRepository) MarkPaid(ctx context.Context, id string) error {
-	cmd, err := r.db.Exec(ctx, `UPDATE payment_milestones SET status = 'paid', paid_at = now(), updated_at = now()
+//
+// BUG FIX (C-1): previously wrote no ledger entry at all when money was collected here, while
+// the single-payment escrow rail's equivalent step (EscrowRepository.MarkHeld) always credits
+// the platform's held liability — so every milestone order's "money in" side never appeared in
+// ledger_entries. Mirrors MarkHeld's ledger write: a credit to the platform (NULL user_id) for
+// the milestone amount collected.
+func (r *PaymentTermsRepository) MarkPaid(ctx context.Context, id, orderID string, amount float64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	cmd, err := tx.Exec(ctx, `UPDATE payment_milestones SET status = 'paid', paid_at = now(), updated_at = now()
 		WHERE id = $1 AND status = 'pending'`, id)
 	if err != nil {
 		return err
@@ -129,7 +141,15 @@ func (r *PaymentTermsRepository) MarkPaid(ctx context.Context, id string) error 
 	if cmd.RowsAffected() == 0 {
 		return fmt.Errorf("milestone is not pending")
 	}
-	return nil
+
+	_, err = tx.Exec(ctx, `INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
+		VALUES ($1, NULL, 'credit', $2, 'Milestone payment collected & held', $3)`,
+		orderID, amount, id)
+	if err != nil {
+		return fmt.Errorf("ledger entry: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *PaymentTermsRepository) UploadProof(ctx context.Context, id, proofURL, uploadedBy string) error {
@@ -222,8 +242,13 @@ func (r *PaymentTermsRepository) Release(ctx context.Context, milestoneID, order
 		return nil, fmt.Errorf("milestone is not approved: %w", err)
 	}
 
+	// BUG FIX (C-1): previously wrote only the two credit rows (exporter payout, platform fee)
+	// with no offsetting debit — same class of bug as escrow's C-07 fix (see EscrowRepository.
+	// MarkReleased). Now mirrors that: debit reverses the platform's held liability booked by
+	// MarkPaid above, then the two credits.
 	_, err = tx.Exec(ctx, `INSERT INTO ledger_entries (order_id, user_id, entry_type, amount, description, reference_id)
 		VALUES
+			($1, NULL, 'debit', $6, 'Milestone released — held liability reversed', $5),
 			($1, $2, 'credit', $3, $4, $5),
 			($1, NULL, 'credit', $6, 'Platform fee earned (milestone release)', $5)`,
 		orderID, exporterID, payoutAmount, fmt.Sprintf("Milestone released: %s", m.Title), m.ID, feeAmount)

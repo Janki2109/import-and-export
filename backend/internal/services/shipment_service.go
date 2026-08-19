@@ -80,6 +80,12 @@ var validShipmentStatuses = map[string]bool{
 // permanently desyncing shipment and order state. "exception" is intentionally excluded from
 // the ordering check — it can be reported at any stage.
 var shipmentStatusOrder = map[string]int{
+	// BUG FIX (C-5): "assigned" (the initial status AssignLogistics sets) had no entry, so the
+	// very first status update on a fresh shipment always hit the `ok == false` branch below and
+	// skipped both the no-going-backward and no-skipping-stages guards entirely — a partner
+	// could post "delivered" immediately after assignment with zero actual movement, which then
+	// flips orders.status to delivered and unlocks the importer's escrow-release precondition.
+	"assigned":               0,
 	"pickup_scheduled":       1,
 	"picked_up":              2,
 	"at_warehouse":           3,
@@ -102,10 +108,27 @@ func (s *ShipmentService) UpdateShipmentStatus(ctx context.Context, shipmentID, 
 		if err != nil {
 			return err
 		}
-		if currentRank, ok := shipmentStatusOrder[string(current.Status)]; ok && newRank < currentRank {
+		currentRank, rankOk := shipmentStatusOrder[string(current.Status)]
+		// BUG FIX (C-5): "exception" has no entry in shipmentStatusOrder (intentionally — it can
+		// be reported at any stage), but that also meant the guards below silently skipped
+		// whenever the shipment's CURRENT status was "exception", acting as a free reset that
+		// re-enabled skipping stages. Fall back to the highest real stage rank ever reached
+		// (from shipment_events) so an exception can't be used to bypass the ordering check.
+		if !rankOk && string(current.Status) == "exception" {
+			events, evErr := s.shipmentRepo.GetEvents(ctx, shipmentID)
+			if evErr == nil {
+				for _, e := range events {
+					if r, ok := shipmentStatusOrder[e.Status]; ok && r > currentRank {
+						currentRank = r
+						rankOk = true
+					}
+				}
+			}
+		}
+		if rankOk && newRank < currentRank {
 			return fmt.Errorf("cannot move shipment status backward from %s to %s", current.Status, status)
 		}
-		if currentRank, ok := shipmentStatusOrder[string(current.Status)]; ok && newRank > currentRank+1 {
+		if rankOk && newRank > currentRank+1 {
 			return fmt.Errorf("cannot skip shipment stages: current status is %s, next expected stage is required before %s", current.Status, status)
 		}
 	}

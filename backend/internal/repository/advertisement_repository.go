@@ -43,7 +43,7 @@ func (r *AdvertisementRepository) ListActive(ctx context.Context) ([]models.Adve
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *AdvertisementRepository) ListByAdvertiser(ctx context.Context, advertiserID string) ([]models.Advertisement, error) {
@@ -63,5 +63,5 @@ func (r *AdvertisementRepository) ListByAdvertiser(ctx context.Context, advertis
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
 }

@@ -29,30 +29,21 @@ func (r *WalletRepository) Balance(ctx context.Context, userID string) (float64,
 }
 
 // PendingWithdrawalsTotal — sum of this user's not-yet-processed withdrawal requests. Since
-// the ledger isn't debited until admin approval (CreateWithdrawalRequest), this has to be
-// subtracted from the raw ledger balance to get what's actually still available to withdraw —
-// otherwise a user could submit several withdrawal requests exceeding their real balance
-// before any of them are approved.
+// the ledger isn't debited until admin approval (CreateWithdrawalRequestIfSufficientBalance),
+// this has to be subtracted from the raw ledger balance to get what's actually still available
+// to withdraw — otherwise a user could submit several withdrawal requests exceeding their real
+// balance before any of them are approved.
 func (r *WalletRepository) PendingWithdrawalsTotal(ctx context.Context, userID string) (float64, error) {
 	var total float64
 	err := r.db.QueryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM withdrawal_requests WHERE user_id = $1 AND status = 'pending'`, userID).Scan(&total)
 	return total, err
 }
 
-// CreateWithdrawalRequest — records the request only; no ledger effect until an admin approves
-// it (see AdminRepository.MarkWithdrawalPaid), which is what makes it genuinely "pending".
-func (r *WalletRepository) CreateWithdrawalRequest(ctx context.Context, userID string, amount float64) (*models.WithdrawalRequest, error) {
-	wr := &models.WithdrawalRequest{UserID: userID, Amount: amount, Status: "pending"}
-	err := r.db.QueryRow(ctx, `
-		INSERT INTO withdrawal_requests (user_id, amount) VALUES ($1, $2)
-		RETURNING id, status, created_at`,
-		userID, amount).Scan(&wr.ID, &wr.Status, &wr.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return wr, nil
-}
-
+// BUG FIX (L-6): an unguarded CreateWithdrawalRequest (no balance check at all) used to sit
+// alongside this method with zero callers anywhere in the codebase — dead code that silently
+// reopened the exact C-06 double-spend hole below for any future caller who reached for the
+// wrong-looking name. Removed; this is now the only way to create a withdrawal request.
+//
 // CreateWithdrawalRequestIfSufficientBalance — SECURITY/RACE FIX (C-06): previously Balance(),
 // PendingWithdrawalsTotal(), the available-balance subtraction, and CreateWithdrawalRequest()
 // were four separate pool queries with no transaction, no row lock, and no unique guard — two
@@ -125,5 +116,5 @@ func (r *WalletRepository) Transactions(ctx context.Context, userID string, limi
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return out, rows.Err()
 }

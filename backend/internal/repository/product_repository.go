@@ -68,7 +68,7 @@ func (r *ProductRepository) list(ctx context.Context, query string, args ...inte
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ProductRepository) Update(ctx context.Context, p *models.Product) error {

@@ -77,7 +77,7 @@ func (r *DocumentRepository) ListVersions(ctx context.Context, documentID string
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *DocumentRepository) GetByID(ctx context.Context, id string) (*models.Document, error) {
@@ -113,7 +113,7 @@ func (r *DocumentRepository) ListByOrder(ctx context.Context, orderID string) ([
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Delete — Journey 9 "no orphan files": the caller (DocumentService) is responsible for also

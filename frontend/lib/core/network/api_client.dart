@@ -181,9 +181,15 @@ class ApiClient {
       headers.remove('Authorization');
     }
     final options = Options(method: requestOptions.method, headers: headers);
+    // BUG FIX (M-10): requestOptions.data for a FormData/multipart body (file uploads) is a
+    // single-use stream — it was already consumed by the original request that got the 401, so
+    // replaying it as-is here sent an empty/broken body. Any upload that happened to hit a 401
+    // and trigger this refresh-and-retry path failed on the replay. FormData.clone() produces a
+    // fresh, unconsumed copy; every other request type is unaffected.
+    final data = requestOptions.data is FormData ? (requestOptions.data as FormData).clone() : requestOptions.data;
     return dio.request(
       requestOptions.path,
-      data: requestOptions.data,
+      data: data,
       queryParameters: requestOptions.queryParameters,
       options: options,
     );

@@ -133,17 +133,26 @@ type counterOfferRequest struct {
 // straight into *time.Time requires full RFC3339 — every counter-offer with a validity date set
 // failed JSON binding with a 400. Accepts both date-only and RFC3339 instead of requiring the
 // frontend to change its wire format.
+// BUG FIX (M-5): previously accepted any parseable date, including one already in the past.
+// QuotationService.Submit rejects a non-future validity_date on the SAME column ("LOGIC FIX
+// H-18") — this negotiation path had no equivalent check, so an accepted counter-offer could
+// write an already-expired validity_date via LockQuotationFinal, producing a locked quotation
+// that could never be converted to an order.
 func parseValidityDate(raw *string) (*time.Time, error) {
 	if raw == nil || *raw == "" {
 		return nil, nil
 	}
-	if t, err := time.Parse("2006-01-02", *raw); err == nil {
-		return &t, nil
+	var t time.Time
+	var err error
+	if t, err = time.Parse("2006-01-02", *raw); err != nil {
+		if t, err = time.Parse(time.RFC3339, *raw); err != nil {
+			return nil, fmt.Errorf("invalid validity_date format: %s", *raw)
+		}
 	}
-	if t, err := time.Parse(time.RFC3339, *raw); err == nil {
-		return &t, nil
+	if !t.After(time.Now()) {
+		return nil, fmt.Errorf("validity_date must be in the future")
 	}
-	return nil, fmt.Errorf("invalid validity_date format: %s", *raw)
+	return &t, nil
 }
 
 // CounterOffer — POST /negotiations/counter/:id

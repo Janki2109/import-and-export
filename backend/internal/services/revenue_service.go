@@ -79,7 +79,7 @@ func (s *MembershipService) VerifyTierPayment(ctx context.Context, in VerifyPurc
 	if _, err := s.feeForTier(tier); err != nil {
 		return err
 	}
-	if err := s.consumeReference(ctx, in); err != nil {
+	if err := s.consumeReference(ctx, in, "tier-"+string(tier)); err != nil {
 		return err
 	}
 
@@ -98,11 +98,16 @@ func (s *MembershipService) VerifyTierPayment(ctx context.Context, in VerifyPurc
 }
 
 // consumeReference — shared idempotency gate for all Verify* methods (H-07).
-func (s *MembershipService) consumeReference(ctx context.Context, in VerifyPurchaseInput) error {
+//
+// BUG FIX (C-2): now also requires the reference's stored `kind` (set at CreatePurchase time)
+// to match what's being verified — previously any unconsumed reference belonging to the caller
+// was accepted regardless of what it was actually issued for, so a reference bought for the
+// cheapest product (e.g. tier-silver) could be redeemed against the most expensive one.
+func (s *MembershipService) consumeReference(ctx context.Context, in VerifyPurchaseInput, expectedKind string) error {
 	if in.Reference == "" {
 		return fmt.Errorf("a purchase reference is required")
 	}
-	consumedUserID, err := s.membershipRepo.ConsumePurchase(ctx, in.Reference)
+	consumedUserID, kind, err := s.membershipRepo.ConsumePurchase(ctx, in.Reference)
 	if err != nil {
 		return err
 	}
@@ -111,6 +116,9 @@ func (s *MembershipService) consumeReference(ctx context.Context, in VerifyPurch
 	}
 	if consumedUserID != in.UserID {
 		return fmt.Errorf("purchase reference does not belong to this user")
+	}
+	if kind != expectedKind {
+		return fmt.Errorf("purchase reference was not issued for this product")
 	}
 	return nil
 }
@@ -152,7 +160,7 @@ type VerifyPurchaseInput struct {
 // VerifyPremiumPayment — on confirmation, grants 30 days of premium tier (extends from current
 // expiry if still active, otherwise from now).
 func (s *MembershipService) VerifyPremiumPayment(ctx context.Context, in VerifyPurchaseInput) error {
-	if err := s.consumeReference(ctx, in); err != nil {
+	if err := s.consumeReference(ctx, in, "premium-membership"); err != nil {
 		return err
 	}
 	existing, err := s.membershipRepo.GetByUserID(ctx, in.UserID)
@@ -174,7 +182,7 @@ func (s *MembershipService) VerifyPremiumPayment(ctx context.Context, in VerifyP
 // Enterprise tier for free. Now extends FeaturedExpiresAt, a column of its own — the tier and
 // its expiry are left completely untouched by a featured-listing purchase.
 func (s *MembershipService) VerifyFeaturedPayment(ctx context.Context, in VerifyPurchaseInput) error {
-	if err := s.consumeReference(ctx, in); err != nil {
+	if err := s.consumeReference(ctx, in, "featured-listing"); err != nil {
 		return err
 	}
 	existing, err := s.membershipRepo.GetByUserID(ctx, in.UserID)

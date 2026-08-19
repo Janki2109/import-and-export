@@ -39,7 +39,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, 
 		}
 		list = append(list, n)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 func (r *NotificationRepository) MarkRead(ctx context.Context, id, userID string) error {

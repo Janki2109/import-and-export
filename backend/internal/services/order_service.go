@@ -25,14 +25,15 @@ type OrderService struct {
 	disputeRepo      *repository.DisputeRepository
 	kycRepo          *repository.KYCRepository
 	paymentTermsRepo *repository.PaymentTermsRepository
+	userRepo         *repository.UserRepository
 	cfg              *config.Config
 	notification     *NotificationService
 	compliance       *ComplianceService
 	stripe           *stripe.Client
 }
 
-func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, disputeRepo *repository.DisputeRepository, kycRepo *repository.KYCRepository, paymentTermsRepo *repository.PaymentTermsRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService, stripeClient *stripe.Client) *OrderService {
-	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, disputeRepo: disputeRepo, kycRepo: kycRepo, paymentTermsRepo: paymentTermsRepo, cfg: cfg, notification: notification, compliance: compliance, stripe: stripeClient}
+func NewOrderService(orderRepo *repository.OrderRepository, escrowRepo *repository.EscrowRepository, auditRepo *repository.AuditLogRepository, disputeRepo *repository.DisputeRepository, kycRepo *repository.KYCRepository, paymentTermsRepo *repository.PaymentTermsRepository, userRepo *repository.UserRepository, cfg *config.Config, notification *NotificationService, compliance *ComplianceService, stripeClient *stripe.Client) *OrderService {
+	return &OrderService{orderRepo: orderRepo, escrowRepo: escrowRepo, auditRepo: auditRepo, disputeRepo: disputeRepo, kycRepo: kycRepo, paymentTermsRepo: paymentTermsRepo, userRepo: userRepo, cfg: cfg, notification: notification, compliance: compliance, stripe: stripeClient}
 }
 
 func (s *OrderService) notify(ctx context.Context, userID, title, body, notifType string, refID *string) {
@@ -78,6 +79,21 @@ type CreateOrderInput struct {
 // unverified importer could place real escrow-backed orders. Both importer and exporter on the
 // order must have an approved (verified) KYC before an order can be created.
 func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*models.Order, *models.EscrowPayment, string, error) {
+	// BUG FIX (H-2): exporter_id was accepted as a plain string with no check that it actually
+	// belonged to an exporter, or that it differed from the importer — a user could place an
+	// escrow-backed order naming themselves as both buyer and seller, or an arbitrary unrelated
+	// account as the seller.
+	if in.ImporterID == in.ExporterID {
+		return nil, nil, "", fmt.Errorf("importer and exporter cannot be the same account")
+	}
+	exporter, err := s.userRepo.GetByID(ctx, in.ExporterID)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("looking up exporter: %w", err)
+	}
+	if exporter == nil || exporter.Role != models.RoleExporter {
+		return nil, nil, "", fmt.Errorf("the selected seller is not a registered exporter")
+	}
+
 	if err := s.requireKYCVerified(ctx, in.ImporterID); err != nil {
 		return nil, nil, "", err
 	}
@@ -85,7 +101,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 		return nil, nil, "", err
 	}
 
-	total := in.Quantity * in.UnitPrice
+	// BUG FIX (L-4): total was stored unrounded while feeAmount/payoutAmount were both round2'd,
+	// so platform_fee_amount + exporter_payout_amount could differ from total_amount by a
+	// fraction of a paisa. Round total first so all three figures are internally consistent.
+	total := round2(in.Quantity * in.UnitPrice)
 	feePercent := s.cfg.PlatformFeePercent
 	feeAmount := round2(total * feePercent / 100)
 	payoutAmount := round2(total - feeAmount)
@@ -141,7 +160,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, in CreateOrderInput) (*m
 
 	s.notify(ctx, order.ImporterID, "Order Created", fmt.Sprintf("Order %s created for %s — complete payment to move it to escrow.", order.OrderNumber, order.ProductName), "order_update", &order.ID)
 	s.notify(ctx, order.ExporterID, "Order Created", fmt.Sprintf("Order %s created for %s. Awaiting importer payment.", order.OrderNumber, order.ProductName), "order_update", &order.ID)
-	_ = s.notification.NotifyAdmin(ctx, "New Order Created", fmt.Sprintf("Order %s created (%s, ₹%.2f).", order.OrderNumber, order.ProductName, order.TotalAmount), "order_update", &order.ID)
+	// BUG FIX (M-9): hardcoded ₹ regardless of order.Currency — a USD/EUR/etc. order reported
+	// rupee amounts in admin alerts and both parties' notifications.
+	_ = s.notification.NotifyAdmin(ctx, "New Order Created", fmt.Sprintf("Order %s created (%s, %s%.2f).", order.OrderNumber, order.ProductName, order.Currency, order.TotalAmount), "order_update", &order.ID)
 
 	// Compliance Center — additive, best-effort. Generating the checklist is intentionally
 	// never allowed to fail or delay order creation itself: it runs in the background and
@@ -225,7 +246,7 @@ func (s *OrderService) ConfirmPaymentDone(ctx context.Context, orderID, importer
 
 	s.notify(ctx, order.ExporterID, "New Order Received", fmt.Sprintf("Payment for order %s marked as paid by the importer. Prepare the shipment.", order.OrderNumber), "order_update", &order.ID)
 	s.notify(ctx, order.ImporterID, "Escrow Locked", fmt.Sprintf("Your payment for order %s is recorded and held in escrow.", order.OrderNumber), "payment", &order.ID)
-	_ = s.notification.NotifyAdmin(ctx, "New Escrow", fmt.Sprintf("₹%.2f collected and held in escrow for order %s.", order.TotalAmount, order.OrderNumber), "escrow", &order.ID)
+	_ = s.notification.NotifyAdmin(ctx, "New Escrow", fmt.Sprintf("%s%.2f collected and held in escrow for order %s.", order.Currency, order.TotalAmount, order.OrderNumber), "escrow", &order.ID)
 	return nil
 }
 
@@ -330,7 +351,21 @@ func (s *OrderService) CreateStripePaymentIntent(ctx context.Context, orderID, i
 	if order.Status != models.OrderCreated {
 		return nil, fmt.Errorf("cannot start payment: order status is %s", order.Status)
 	}
-	amountMinor := int64(round2(order.TotalAmount) * 100)
+	// BUG FIX (H-3): this path never checked for milestone payment terms — the other three
+	// confirm paths (ConfirmPaymentDone/ConfirmBankTransfer/ConfirmPaymentViaGateway) all call
+	// rejectIfMilestoneTermsExist first, so a Stripe charge could be started (and the card
+	// captured) for an order that's actually on milestone terms, then get stranded when the
+	// webhook rejects it.
+	if err := s.rejectIfMilestoneTermsExist(ctx, order.ID); err != nil {
+		return nil, err
+	}
+	// BUG FIX (C-3): previously int64(round2(total) * 100) — round2 rounds to 2 decimal places
+	// first, then the *100 multiply/truncate can still land a fraction of a cent off due to
+	// float representation, while ConfirmPaymentViaGateway (the webhook side) computes the
+	// expected minor-unit amount via math.Round(total * 100) directly. The two could disagree
+	// by one minor unit, so Stripe would capture the card and the webhook would then reject the
+	// payment as a mismatch. Use the exact same formula as the webhook check.
+	amountMinor := int64(math.Round(order.TotalAmount * 100))
 	return s.stripe.CreatePaymentIntent(ctx, amountMinor, order.Currency, order.ID)
 }
 
@@ -423,8 +458,8 @@ func (s *OrderService) ConfirmDeliveryAndRelease(ctx context.Context, orderID, a
 	}
 	s.audit(ctx, actorID, "escrow.released", order.ID, map[string]interface{}{"payout_amount": escrow.PayoutAmount})
 
-	s.notify(ctx, order.ExporterID, "Payment Released", fmt.Sprintf("₹%.2f approved for payout on order %s. Platform will transfer it to your account.", escrow.PayoutAmount, order.OrderNumber), "payment", &order.ID)
-	s.notify(ctx, order.ExporterID, "Wallet Credited", fmt.Sprintf("₹%.2f has been credited to your wallet for order %s.", escrow.PayoutAmount, order.OrderNumber), "wallet", &order.ID)
+	s.notify(ctx, order.ExporterID, "Payment Released", fmt.Sprintf("%s%.2f approved for payout on order %s. Platform will transfer it to your account.", order.Currency, escrow.PayoutAmount, order.OrderNumber), "payment", &order.ID)
+	s.notify(ctx, order.ExporterID, "Wallet Credited", fmt.Sprintf("%s%.2f has been credited to your wallet for order %s.", order.Currency, escrow.PayoutAmount, order.OrderNumber), "wallet", &order.ID)
 	s.notify(ctx, order.ImporterID, "Delivery Confirmed", fmt.Sprintf("Order %s marked complete — payment released to the exporter.", order.OrderNumber), "order_update", &order.ID)
 	return nil
 }
@@ -495,8 +530,8 @@ func (s *OrderService) RefundPartial(ctx context.Context, orderID, adminID strin
 	}
 	s.audit(ctx, adminID, "escrow.partial_refund", order.ID, map[string]interface{}{"amount": amount, "reason": reason})
 
-	s.notify(ctx, order.ImporterID, "Partial Refund Issued", fmt.Sprintf("₹%.2f of your payment for order %s has been refunded: %s", amount, order.OrderNumber, reason), "payment", &order.ID)
-	s.notify(ctx, order.ExporterID, "Partial Refund Issued", fmt.Sprintf("A partial refund of ₹%.2f was issued to the importer for order %s: %s", amount, order.OrderNumber, reason), "payment", &order.ID)
+	s.notify(ctx, order.ImporterID, "Partial Refund Issued", fmt.Sprintf("%s%.2f of your payment for order %s has been refunded: %s", order.Currency, amount, order.OrderNumber, reason), "payment", &order.ID)
+	s.notify(ctx, order.ExporterID, "Partial Refund Issued", fmt.Sprintf("A partial refund of %s%.2f was issued to the importer for order %s: %s", order.Currency, amount, order.OrderNumber, reason), "payment", &order.ID)
 	return nil
 }
 
@@ -509,8 +544,14 @@ func (s *OrderService) NotifyPendingRelease(ctx context.Context, order *models.O
 	_ = s.notification.NotifyAdmin(ctx, "Pending Release", fmt.Sprintf("Order %s: auto-release window has passed with no dispute. Review and release/hold/refund from Escrow Payments.", order.OrderNumber), "escrow", &order.ID)
 }
 
+// BUG FIX (M-8): previously float64(int(f*100+0.5))/100 — a manual "add 0.5 then truncate"
+// rounding that (a) is inconsistent with math.Round, used by the gateway-payment check in
+// ConfirmPaymentViaGateway (this mismatch was the direct cause of C-3), and (b) rounds negative
+// values in the wrong direction (int() truncates toward zero, so -0.5 truncates to 0 instead of
+// rounding to -1 the way math.Round would). Every fee/payout/milestone amount now uses the same
+// rounding function as the gateway check.
 func round2(f float64) float64 {
-	return float64(int(f*100+0.5)) / 100
+	return math.Round(f*100) / 100
 }
 
 // generateOrderNumber — BUG FIX (M-27): previously a 6-digit rand.Intn(999999) suffix (which

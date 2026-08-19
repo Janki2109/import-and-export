@@ -178,6 +178,16 @@ func (s *AuthService) Login(ctx context.Context, email, password, requestedRole 
 				return nil, nil, fmt.Errorf("switching role: %w", err)
 			}
 			user.Role = models.UserRole(requestedRole)
+			// BUG FIX (H-1): a role switch previously left every refresh token issued under the
+			// old role still valid, so a session opened as importer could keep renewing itself
+			// (and a still-live access token used) concurrently with a new exporter session on
+			// the same account — e.g. submit a quotation as exporter, accept it as importer, in
+			// the same few minutes. Revoking existing refresh tokens here bounds that overlap to
+			// the current access token's remaining TTL (JWTAccessTTLMin, a few minutes) instead
+			// of letting old-role sessions persist indefinitely via refresh.
+			if err := s.refreshTokenRepo.RevokeAllForUser(ctx, user.ID); err != nil {
+				log.Printf("auth: failed to revoke prior sessions after role switch for user %s: %v", user.ID, err)
+			}
 		}
 	}
 

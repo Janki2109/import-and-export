@@ -137,7 +137,7 @@ func (r *OrderRepository) ListByUser(ctx context.Context, userID string, role mo
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return orders, nil
+	return orders, rows.Err()
 }
 
 // HasOrderBetween — Journey 8: whether these two users share at least one order together
@@ -190,5 +190,5 @@ func (r *OrderRepository) GetOrdersDueForAutoRelease(ctx context.Context) ([]mod
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return payments, nil
+	return payments, rows.Err()
 }

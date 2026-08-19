@@ -99,5 +99,5 @@ func (r *LoginAttemptRepository) RecentFailedLoginEmails(ctx context.Context, th
 		}
 		out[email] = count
 	}
-	return out, nil
+	return out, rows.Err()
 }

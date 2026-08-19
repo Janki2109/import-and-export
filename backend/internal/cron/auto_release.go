@@ -48,6 +48,19 @@ func runOnce(orderRepo *repository.OrderRepository, orderService *services.Order
 		if order.Status == "disputed" {
 			continue
 		}
+		// BUG FIX (M-7): ConfirmDeliveryAndRelease's "order must have actually shipped" guard
+		// (LOGIC FIX L-09) only runs when requireOwnership=true — this job intentionally calls it
+		// with requireOwnership=false (same trust boundary as the admin's manual release button),
+		// which skipped that check entirely. An order that was paid but never shipped could auto-
+		// release to the exporter after the grace window with no human action. Enforce the same
+		// shipped-status precondition here before ever reaching the release call.
+		switch order.Status {
+		case "shipped", "in_transit", "delivered", "confirmed":
+			// ok — goods have actually moved
+		default:
+			log.Printf("auto-release cron: skipping order %s — not yet shipped (status: %s)", order.OrderNumber, order.Status)
+			continue
+		}
 
 		if escrow.AdminNotifiedAt == nil {
 			orderService.NotifyPendingRelease(ctx, order)

@@ -43,7 +43,7 @@ func (r *FleetRepository) ListByLogistics(ctx context.Context, logisticsID strin
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *FleetRepository) GetByID(ctx context.Context, id string) (*models.FleetVehicle, error) {

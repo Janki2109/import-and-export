@@ -64,7 +64,7 @@ func (r *QuotationRepository) ListByRFQ(ctx context.Context, rfqID string) ([]mo
 		}
 		out = append(out, q)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *QuotationRepository) ListByExporter(ctx context.Context, exporterID string) ([]models.Quotation, error) {
@@ -87,7 +87,7 @@ func (r *QuotationRepository) ListByExporter(ctx context.Context, exporterID str
 		}
 		out = append(out, q)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Accept marks this quotation accepted + links it to the newly created order,

@@ -36,7 +36,7 @@ func (r *ReferenceRepository) SearchHSCodes(ctx context.Context, query string, l
 		}
 		out = append(out, h)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ReferenceRepository) GetHSCodeByCode(ctx context.Context, code string) (*models.HSCode, error) {
@@ -69,7 +69,7 @@ func (r *ReferenceRepository) ListGSTRates(ctx context.Context) ([]models.GSTRat
 		}
 		out = append(out, g)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ReferenceRepository) SearchCountries(ctx context.Context, query string, limit int) ([]models.Country, error) {
@@ -90,7 +90,7 @@ func (r *ReferenceRepository) SearchCountries(ctx context.Context, query string,
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ReferenceRepository) GetCountryByName(ctx context.Context, name string) (*models.Country, error) {
@@ -159,5 +159,5 @@ func (r *ReferenceRepository) ListPolicies(ctx context.Context, countryID, hsCha
 		}
 		out = append(out, p)
 	}
-	return out, nil
+	return out, rows.Err()
 }

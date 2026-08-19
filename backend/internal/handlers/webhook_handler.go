@@ -90,7 +90,12 @@ func (h *WebhookHandler) Razorpay(c *gin.Context) {
 // transient processing failure (worth a 5xx so the gateway retries).
 func isPaymentMismatch(err error) bool {
 	msg := err.Error()
-	return len(msg) >= 15 && (msg[:15] == "payment amount " || (len(msg) >= 17 && msg[:17] == "payment currency"))
+	// BUG FIX (C-4): "payment currency" is 16 characters but was compared against a 17-char
+	// slice (msg[:17]) — the actual error text is "payment currency mismatch: ..." (17 chars
+	// including the trailing space before "mismatch"), so the comparison could never be true.
+	// A currency mismatch fell through to the transient-failure branch (HTTP 500), so
+	// Razorpay/Stripe retried a permanently-failing webhook on its full retry schedule.
+	return len(msg) >= 15 && (msg[:15] == "payment amount " || (len(msg) >= 17 && msg[:17] == "payment currency "))
 }
 
 // Stripe — POST /webhooks/stripe. Verifies the Stripe-Signature header before acting.

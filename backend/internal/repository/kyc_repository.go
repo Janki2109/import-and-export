@@ -96,7 +96,7 @@ func (r *KYCRepository) ListPending(ctx context.Context, limit, offset int) ([]m
 		}
 		list = append(list, k)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 // ListByStatus — admin review queue, enriched with the applicant's identity (name/email/
@@ -138,7 +138,7 @@ func (r *KYCRepository) ListByStatus(ctx context.Context, status string, limit, 
 		}
 		list = append(list, k)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 // Approve/Reject by admin. If approved, also stores the Razorpay contact_id + fund_account_id

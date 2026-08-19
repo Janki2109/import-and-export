@@ -46,7 +46,7 @@ func (r *ComplianceRepository) MatchRules(ctx context.Context, origin, destinati
 		}
 		out = append(out, rule)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ComplianceRepository) ListRules(ctx context.Context) ([]models.ComplianceRule, error) {
@@ -67,7 +67,7 @@ func (r *ComplianceRepository) ListRules(ctx context.Context) ([]models.Complian
 		}
 		out = append(out, rule)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ComplianceRepository) CreateRule(ctx context.Context, rule *models.ComplianceRule) error {
@@ -179,7 +179,7 @@ func (r *ComplianceRepository) ListHistory(ctx context.Context, orderComplianceI
 		}
 		out = append(out, h)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Admin Compliance Center ----------------
@@ -239,7 +239,7 @@ func (r *ComplianceRepository) AdminList(ctx context.Context, f AdminComplianceF
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 type ComplianceSummary struct {
@@ -282,7 +282,7 @@ func (r *ComplianceRepository) IsShipmentBlocked(ctx context.Context, orderID st
 		}
 		missing = append(missing, name)
 	}
-	return len(missing) > 0, missing, nil
+	return len(missing) > 0, missing, rows.Err()
 }
 
 func scanOrderCompliance(rows pgx.Rows) ([]models.OrderCompliance, error) {
@@ -296,5 +296,5 @@ func scanOrderCompliance(rows pgx.Rows) ([]models.OrderCompliance, error) {
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, rows.Err()
 }

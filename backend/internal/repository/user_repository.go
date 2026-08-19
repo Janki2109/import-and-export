@@ -43,7 +43,7 @@ func (r *UserRepository) ListByRole(ctx context.Context, role *string) ([]models
 		}
 		out = append(out, u)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {

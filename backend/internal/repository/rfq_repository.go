@@ -133,7 +133,7 @@ func (r *RFQRepository) list(ctx context.Context, query string, args ...interfac
 		}
 		out = append(out, rfq)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *RFQRepository) UpdateStatus(ctx context.Context, id string, status models.RFQStatus) error {

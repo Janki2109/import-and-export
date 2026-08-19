@@ -291,8 +291,17 @@ func (r *EscrowRepository) MarkOnHold(ctx context.Context, orderID string) error
 // MarkAdminNotified — the auto-release timer calls this once it's sent the "escrow due for
 // release" notification to admin, so the cron doesn't re-notify every pass.
 func (r *EscrowRepository) MarkAdminNotified(ctx context.Context, orderID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE escrow_payments SET admin_notified_at = now() WHERE order_id = $1`, orderID)
-	return err
+	// BUG FIX (L-5): RowsAffected was previously ignored — if orderID didn't match any escrow
+	// row, this silently no-opped and the caller (the auto-release cron) treated it as success,
+	// so a failed state transition passed as though the admin had genuinely been notified.
+	cmd, err := r.db.Exec(ctx, `UPDATE escrow_payments SET admin_notified_at = now() WHERE order_id = $1`, orderID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return fmt.Errorf("no escrow payment found for order %s", orderID)
+	}
+	return nil
 }
 
 // EscrowSummary — aggregate totals for the admin escrow dashboard.
@@ -303,13 +312,21 @@ type EscrowSummary struct {
 	TotalRefunded  float64 `json:"total_refunded"`
 }
 
+// BUG FIX (M-1, M-3): HoldingBalance/PendingRelease previously summed the GROSS `amount`
+// (ignoring any partial refund already taken out via RefundPartial, which leaves status
+// 'held'), and TotalReleased summed gross payout_amount the same way GetExporterTotals used to
+// before its own C-05/etc. fixes — so this admin summary and the exporter's own wallet screen
+// showed different numbers for the same escrow. TotalRefunded only counted status = 'refunded'
+// (a FULL refund), so a partial refund (status stays 'held') was never counted as refunded
+// anywhere on the admin dashboard. Now nets refunded_amount consistently, and TotalRefunded
+// sums refunded_amount unconditionally (covers both partial and full refunds).
 func (r *EscrowRepository) GetSummary(ctx context.Context) (*EscrowSummary, error) {
 	s := &EscrowSummary{}
 	err := r.db.QueryRow(ctx, `SELECT
-		COALESCE(SUM(amount) FILTER (WHERE status IN ('held','on_hold')), 0),
-		COALESCE(SUM(amount) FILTER (WHERE status = 'held'), 0),
-		COALESCE(SUM(payout_amount) FILTER (WHERE status = 'released'), 0),
-		COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0)
+		COALESCE(SUM(GREATEST(amount - refunded_amount, 0)) FILTER (WHERE status IN ('held','on_hold')), 0),
+		COALESCE(SUM(GREATEST(amount - refunded_amount, 0)) FILTER (WHERE status = 'held'), 0),
+		COALESCE(SUM(GREATEST(payout_amount - refunded_amount, 0)) FILTER (WHERE status = 'released'), 0),
+		COALESCE(SUM(refunded_amount), 0)
 		FROM escrow_payments`).Scan(&s.HoldingBalance, &s.PendingRelease, &s.TotalReleased, &s.TotalRefunded)
 	if err != nil {
 		return nil, err
@@ -394,5 +411,5 @@ func (r *EscrowRepository) ListEscrowOrders(ctx context.Context, escrowStatus *s
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }

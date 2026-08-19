@@ -48,14 +48,22 @@ class AuthProvider extends ChangeNotifier {
       final company = await _companyService.getMine();
       companyExists = company != null;
     } catch (_) {
-      companyExists = false;
+      // BUG FIX (H-5): getMine()/getMyStatus() already signal "genuinely not onboarded" with a
+      // normal successful response (data == null / no KYC row) — reaching this catch block means
+      // the request itself failed (timeout, DNS, 5xx), not that onboarding is incomplete.
+      // Previously this forced companyExists = false, which the router (app_router.dart) treats
+      // identically to "confirmed not onboarded" and redirects to the create-company screen —
+      // a transient network hiccup at login could bounce a fully-onboarded user back into
+      // onboarding. Leave the flag at its "not checked yet" null state instead, which the router
+      // already treats as "wait" rather than "redirect".
+      companyExists = null;
     }
     try {
       final kyc = await _kycService.getMyStatus();
       kycSubmitted = kyc['id'] != null;
       kycStatus = kyc['status'] as String?;
     } catch (_) {
-      kycSubmitted = false;
+      kycSubmitted = null;
       kycStatus = null;
     }
     notifyListeners();
@@ -178,7 +186,16 @@ class AuthProvider extends ChangeNotifier {
         // best-effort — local session is cleared regardless
       }
     }
-    await _storage.deleteAll();
+    // BUG FIX (H-4): deleteAll() wiped every FlutterSecureStorage entry, including the chat
+    // end-to-end encryption private key (chat_e2e_service.dart) — its own contract comment says
+    // this key is "generated exactly once per device install", but a routine logout regenerated
+    // it, permanently losing the ability to decrypt every previously-received chat message. Only
+    // clear the auth-session keys that logout is actually responsible for.
+    await _storage.delete(key: AppConstants.tokenKey);
+    await _storage.delete(key: AppConstants.refreshTokenKey);
+    await _storage.delete(key: AppConstants.roleKey);
+    await _storage.delete(key: AppConstants.userIdKey);
+    await _storage.delete(key: AppConstants.userNameKey);
     currentUser = null;
     companyExists = null;
     kycSubmitted = null;
@@ -189,7 +206,13 @@ class AuthProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    ApiClient.onSessionExpired = null;
+    // BUG FIX (L-7): onSessionExpired is a single static slot shared by every ApiClient call
+    // app-wide — nulling it here served no purpose (AuthProvider lives for the app's lifetime;
+    // dispose() only runs at app teardown) and only created the failure mode the field's own
+    // doc comment warns about: if a second AuthProvider instance were ever created, this line
+    // would wipe out ITS constructor-installed handler, breaking session-expiry handling
+    // globally. Simply not clearing it here removes that fragility with no behavior change for
+    // the single-instance case this app actually uses.
     super.dispose();
   }
 }

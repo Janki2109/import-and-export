@@ -122,7 +122,13 @@ func (s *PaymentTermsService) Setup(ctx context.Context, actorID, actorRole stri
 
 	currency := in.Currency
 	if currency == "" {
-		currency = "INR"
+		currency = order.Currency
+	}
+	// BUG FIX (M-6): currency was never compared to the order's own currency — a USD order
+	// could carry INR payment terms with no error, and release notifications would then quote
+	// the wrong currency symbol/code against the right number.
+	if order.Currency != "" && currency != order.Currency {
+		return nil, nil, fmt.Errorf("payment terms currency (%s) must match the order's currency (%s)", currency, order.Currency)
 	}
 
 	terms := &models.PaymentTerms{
@@ -252,7 +258,7 @@ func (s *PaymentTermsService) PayMilestone(ctx context.Context, milestoneID, imp
 			return fmt.Errorf("previous milestone %q must be fully released first (currently %s)", other.Title, other.Status)
 		}
 	}
-	if err := s.repo.MarkPaid(ctx, milestoneID); err != nil {
+	if err := s.repo.MarkPaid(ctx, milestoneID, order.ID, m.Amount); err != nil {
 		return err
 	}
 	if !m.ProofRequired {

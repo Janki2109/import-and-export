@@ -82,7 +82,7 @@ func (r *NegotiationRepository) ListMine(ctx context.Context, userID string, rol
 		}
 		out = append(out, n)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Offers (the structured timeline) ----------------
@@ -119,7 +119,7 @@ func (r *NegotiationRepository) ListOffers(ctx context.Context, negotiationID st
 		}
 		out = append(out, o)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *NegotiationRepository) GetOffer(ctx context.Context, id string) (*models.NegotiationOffer, error) {
@@ -238,5 +238,5 @@ func (r *NegotiationRepository) AdminList(ctx context.Context, f AdminNegotiatio
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }

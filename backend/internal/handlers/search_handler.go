@@ -68,6 +68,12 @@ func (h *SearchHandler) CalculateDuty(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "hs_code and numeric assessable_value are required")
 		return
 	}
+	// BUG FIX (L-2): only parseability was checked, never sign — a negative assessable_value
+	// produced a negative duty estimate.
+	if value < 0 {
+		response.Error(c, http.StatusBadRequest, "assessable_value must not be negative")
+		return
+	}
 
 	breakdown, err := h.searchService.CalculateDuty(c.Request.Context(), hsCode, value)
 	if err != nil {
@@ -85,6 +91,12 @@ func (h *SearchHandler) CalculateFreight(c *gin.Context) {
 	height, err4 := strconv.ParseFloat(c.DefaultQuery("height_cm", "0"), 64)
 	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 		response.Error(c, http.StatusBadRequest, "invalid numeric parameters")
+		return
+	}
+	// BUG FIX (L-2): only parseability was checked, never sign — a negative weight_kg (or
+	// dimension) produced a negative freight estimate.
+	if weight < 0 || length < 0 || width < 0 || height < 0 {
+		response.Error(c, http.StatusBadRequest, "weight and dimensions must not be negative")
 		return
 	}
 

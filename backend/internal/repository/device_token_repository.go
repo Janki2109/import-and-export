@@ -39,7 +39,7 @@ func (r *DeviceTokenRepository) ListTokensForUser(ctx context.Context, userID st
 		}
 		tokens = append(tokens, t)
 	}
-	return tokens, nil
+	return tokens, rows.Err()
 }
 
 func (r *DeviceTokenRepository) Unregister(ctx context.Context, token string) error {

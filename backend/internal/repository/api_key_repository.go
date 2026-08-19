@@ -41,7 +41,7 @@ func (r *APIKeyRepository) ListByUser(ctx context.Context, userID string) ([]mod
 		}
 		out = append(out, k)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *APIKeyRepository) Revoke(ctx context.Context, id, userID string) error {

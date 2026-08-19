@@ -170,8 +170,13 @@ func (s *NegotiationService) CounterOffer(ctx context.Context, negotiationID, ac
 	if latest != nil && latest.CreatedBy == actingParty {
 		return nil, fmt.Errorf("waiting for the other party to respond to your last offer")
 	}
+	// BUG FIX (L-5): this error was previously discarded — a failed status transition (e.g. a
+	// dropped connection mid-update) passed as though the prior offer had genuinely been marked
+	// countered, leaving it stuck at its old status while a new round proceeds anyway.
 	if latest != nil {
-		_ = s.repo.SetOfferStatus(ctx, latest.ID, models.OfferCountered)
+		if err := s.repo.SetOfferStatus(ctx, latest.ID, models.OfferCountered); err != nil {
+			return nil, fmt.Errorf("updating previous offer status: %w", err)
+		}
 	}
 
 	round, err := s.repo.IncrementRound(ctx, negotiationID)
@@ -227,6 +232,14 @@ func (s *NegotiationService) AcceptOffer(ctx context.Context, negotiationID, act
 	actingParty := s.partyOf(n, actorID)
 	if latest.CreatedBy == actingParty {
 		return fmt.Errorf("you cannot accept your own offer — waiting for the other party")
+	}
+	// BUG FIX (M-5): AcceptOffer never compared the offer's own validity_date to now — an
+	// expired counter-offer could still be accepted, and LockQuotationFinal below copies that
+	// same expired date onto the locked quotation (which QuotationService.Accept then always
+	// rejects as expired — see "LOGIC FIX H-18"), so the negotiation could never actually
+	// convert to an order.
+	if latest.ValidityDate != nil && !latest.ValidityDate.After(time.Now()) {
+		return fmt.Errorf("this offer's validity date has expired and can no longer be accepted")
 	}
 
 	if err := s.repo.SetOfferStatus(ctx, latest.ID, models.OfferAccepted); err != nil {

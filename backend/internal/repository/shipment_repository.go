@@ -131,7 +131,13 @@ func (r *ShipmentRepository) UpdateStatus(ctx context.Context, shipmentID, statu
 		orderStatus = "delivered"
 	}
 	if orderStatus != "" {
-		if _, err := tx.Exec(ctx, `UPDATE orders SET status = $1 WHERE id = $2`, orderStatus, orderID); err != nil {
+		// BUG FIX (M-4): this UPDATE was unconditional — an order already at a terminal state
+		// (payment_released, refunded, disputed) could be rolled back to in_transit/delivered by
+		// a later shipment status update, corrupting the order state machine and the admin escrow
+		// list. Escrow money itself was already protected by separate guards; this only guards
+		// the order row's own status column.
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status = $1
+			WHERE id = $2 AND status NOT IN ('payment_released', 'refunded', 'disputed')`, orderStatus, orderID); err != nil {
 			return err
 		}
 	}
@@ -178,7 +184,7 @@ func (r *ShipmentRepository) ListByLogistics(ctx context.Context, logisticsID st
 		}
 		list = append(list, s)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 func (r *ShipmentRepository) AddPOD(ctx context.Context, pod *models.PODDocument) error {
@@ -205,5 +211,5 @@ func (r *ShipmentRepository) GetEvents(ctx context.Context, shipmentID string) (
 		}
 		events = append(events, e)
 	}
-	return events, nil
+	return events, rows.Err()
 }

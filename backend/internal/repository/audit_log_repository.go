@@ -59,7 +59,7 @@ func (r *AuditLogRepository) ListByEntity(ctx context.Context, entityType, entit
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]models.AuditLog, error) {
@@ -79,5 +79,5 @@ func (r *AuditLogRepository) List(ctx context.Context, limit, offset int) ([]mod
 		}
 		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
 }

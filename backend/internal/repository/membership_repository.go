@@ -50,19 +50,25 @@ func (r *MembershipRepository) CreatePurchase(ctx context.Context, userID, refer
 	return err
 }
 
-// ConsumePurchase marks the reference used and returns the user id it belongs to, or ("", nil)
-// if the reference doesn't exist or was already consumed.
-func (r *MembershipRepository) ConsumePurchase(ctx context.Context, reference string) (string, error) {
-	var userID string
+// ConsumePurchase marks the reference used and returns the user id and kind it belongs to, or
+// ("", "", nil) if the reference doesn't exist or was already consumed.
+//
+// BUG FIX (C-2): previously returned only user_id — the `kind` column (premium-membership,
+// featured-listing, tier-silver, tier-gold, tier-enterprise) was written by CreatePurchase but
+// never read back, so consumeReference only checked ownership, not what was actually paid for.
+// Any valid reference could be redeemed against any product (e.g. pay for tier-silver, then
+// call VerifyTierPayment with tier=enterprise). Now returns kind too so the caller can verify it.
+func (r *MembershipRepository) ConsumePurchase(ctx context.Context, reference string) (string, string, error) {
+	var userID, kind string
 	err := r.db.QueryRow(ctx, `UPDATE membership_purchases SET consumed_at = now()
-		WHERE reference = $1 AND consumed_at IS NULL RETURNING user_id`, reference).Scan(&userID)
+		WHERE reference = $1 AND consumed_at IS NULL RETURNING user_id, kind`, reference).Scan(&userID, &kind)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return "", nil
+			return "", "", nil
 		}
-		return "", err
+		return "", "", err
 	}
-	return userID, nil
+	return userID, kind, nil
 }
 
 // ListFeatured — role filter joins users so exporter/logistics dashboards can show
@@ -91,5 +97,5 @@ func (r *MembershipRepository) ListFeatured(ctx context.Context, role string) ([
 		}
 		out = append(out, u)
 	}
-	return out, nil
+	return out, rows.Err()
 }

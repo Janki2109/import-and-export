@@ -39,7 +39,7 @@ func (r *AdminRepository) ListUsers(ctx context.Context, role *string, limit, of
 		}
 		out = append(out, u)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *AdminRepository) SetUserActive(ctx context.Context, userID string, active bool) error {
@@ -86,7 +86,7 @@ func (r *AdminRepository) ListUsersRich(ctx context.Context, role *string, limit
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // DeleteUser refuses to delete anyone with existing trade activity (orders, RFQs, or
@@ -133,7 +133,7 @@ func (r *AdminRepository) ListAllOrders(ctx context.Context, status *string, lim
 		}
 		out = append(out, o)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Rich order view (Order Management screen) ----------------
@@ -181,7 +181,7 @@ func (r *AdminRepository) ListAllOrdersRich(ctx context.Context, status *string,
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Quotation Management ----------------
@@ -218,7 +218,7 @@ func (r *AdminRepository) ListAllQuotations(ctx context.Context, limit, offset i
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Wallet Management (every user's wallet at a glance) ----------------
@@ -250,9 +250,13 @@ func (r *AdminRepository) ListAllWallets(ctx context.Context) ([]AdminWalletRow,
 			FROM ledger_entries WHERE user_id IS NOT NULL GROUP BY user_id
 		) l ON l.user_id = u.id
 		LEFT JOIN (
+			-- BUG FIX (M-2): same gross/net error GetSummary had (M-1) — summed gross e.amount
+			-- (fee included) for pending_release and never subtracted refunded_amount from
+			-- total_released, so the admin wallet list disagreed with the exporter's own wallet
+			-- screen (EscrowRepository.GetExporterTotals) for the same escrow. Netted the same way.
 			SELECT o.exporter_id,
-				SUM(e.amount) FILTER (WHERE e.status IN ('held','on_hold')) AS pending_release,
-				SUM(e.payout_amount) FILTER (WHERE e.status = 'released') AS total_released
+				SUM(GREATEST(e.payout_amount - e.refunded_amount, 0)) FILTER (WHERE e.status IN ('held','on_hold')) AS pending_release,
+				SUM(GREATEST(e.payout_amount - e.refunded_amount, 0)) FILTER (WHERE e.status = 'released') AS total_released
 			FROM escrow_payments e JOIN orders o ON o.id = e.order_id GROUP BY o.exporter_id
 		) esc ON esc.exporter_id = u.id
 		-- BUG FIX (M-29): previously excluded 'logistics' despite this function's own doc
@@ -276,7 +280,7 @@ func (r *AdminRepository) ListAllWallets(ctx context.Context) ([]AdminWalletRow,
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Withdrawal Requests ----------------
@@ -312,7 +316,7 @@ func (r *AdminRepository) ListWithdrawals(ctx context.Context) ([]AdminWithdrawa
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // MarkWithdrawalPaid — admin approves the request. This is the moment the actual ledger debit
@@ -407,7 +411,7 @@ func (r *AdminRepository) GetAnalytics(ctx context.Context) (*models.Analytics, 
 		a.OrdersByStatus[status] = count
 	}
 
-	return a, nil
+	return a, rows.Err()
 }
 
 // ---------------- Dashboard charts ----------------
@@ -568,7 +572,7 @@ func (r *AdminRepository) ListAllRFQs(ctx context.Context, limit, offset int) ([
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *AdminRepository) DeleteRFQ(ctx context.Context, id string) error {
@@ -615,7 +619,7 @@ func (r *AdminRepository) ListAllShipments(ctx context.Context, status *string, 
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Logistics Management ----------------
@@ -668,7 +672,7 @@ func (r *AdminRepository) ListLogistics(ctx context.Context) ([]AdminLogisticsRo
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ---------------- Chat Management ----------------
@@ -725,7 +729,7 @@ func (r *AdminRepository) ListAllConversations(ctx context.Context) ([]AdminConv
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *AdminRepository) SetConversationArchived(ctx context.Context, id string, archived bool) error {

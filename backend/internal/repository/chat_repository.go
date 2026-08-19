@@ -85,7 +85,7 @@ func (r *ChatRepository) ListForUser(ctx context.Context, userID string) ([]mode
 		s.UnreadCount = unread
 		out = append(out, s)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ChatRepository) CreateMessage(ctx context.Context, m *models.Message) error {
@@ -127,7 +127,7 @@ func (r *ChatRepository) ListMessages(ctx context.Context, conversationID string
 		}
 		out = append(out, m)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *ChatRepository) MarkRead(ctx context.Context, conversationID, readerID string) error {

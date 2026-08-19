@@ -76,7 +76,12 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		Notes:           req.Notes,
 	})
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		// BUG FIX (L-3): every CreateOrder failure — including ordinary business-rule rejections
+		// like "KYC approval required" — was reported as HTTP 500, so a normal validation
+		// failure surfaced to the client as a server error instead of the actionable 400 the
+		// same message would be as a "Bad Request" (matching how every other handler in this
+		// codebase reports a service-layer rejection).
+		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
