@@ -18,4 +18,8 @@ class NotificationService {
       'platform': platform,
     });
   }
+
+  Future<void> unregisterDevice(String token) async {
+    await _client.post('/notifications/unregister-device', data: {'token': token});
+  }
 }

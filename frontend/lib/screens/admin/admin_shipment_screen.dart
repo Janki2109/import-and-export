@@ -5,6 +5,7 @@ import '../../models/order.dart';
 import '../../services/admin_service.dart';
 import '../../services/order_service.dart';
 import '../../widgets/status_badge.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Admin-wide Shipment Management — every shipment on the platform with status filter,
 /// search, and a tracking-timeline detail view. Backed by the admin-only GET /admin/shipments
@@ -108,8 +109,8 @@ class _AdminShipmentScreenState extends State<AdminShipmentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Shipment Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Shipment Management'),
+      body: AdminPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminShipmentRow>>(
           future: _future,
@@ -135,15 +136,9 @@ class _AdminShipmentScreenState extends State<AdminShipmentScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: TextField(
+                  child: AdminSearchField(
+                    hint: 'Search by order #, tracking #, importer, exporter',
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      hintText: 'Search by order #, tracking #, importer, exporter',
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Theme.of(context).cardTheme.color,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                    ),
                   ),
                 ),
                 SizedBox(
@@ -161,30 +156,23 @@ class _AdminShipmentScreenState extends State<AdminShipmentScreen> {
                 const SizedBox(height: 4),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No shipments found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(icon: Icons.local_shipping_outlined, title: 'No shipments found.', subtitle: 'Try a different search or status filter.')
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final s = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: const Color(0xFF0EA5E9),
                                 onTap: () => _showTrack(s),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          Expanded(child: Text(s.orderNumber, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5))),
+                                          Expanded(child: Text(s.orderNumber, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                                           StatusBadge(status: s.status),
                                         ],
                                       ),
@@ -207,7 +195,6 @@ class _AdminShipmentScreenState extends State<AdminShipmentScreen> {
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -217,7 +204,7 @@ class _AdminShipmentScreenState extends State<AdminShipmentScreen> {
             );
           },
         ),
-      ),
+      )),
     );
   }
 

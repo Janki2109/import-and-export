@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
-import '../../widgets/status_badge.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Admin-wide RFQ Management — every RFQ on the platform, with search/status filter and
 /// delete. Backed by the admin-only GET/DELETE /admin/rfqs endpoints added for this screen.
@@ -100,8 +100,9 @@ class _AdminRFQScreenState extends State<AdminRFQScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('RFQ Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'RFQ Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminRFQRow>>(
           future: _future,
@@ -127,15 +128,9 @@ class _AdminRFQScreenState extends State<AdminRFQScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: TextField(
+                  child: AdminSearchField(
+                    hint: 'Search by RFQ #, product, or importer',
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      hintText: 'Search by RFQ #, product, or importer',
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Theme.of(context).cardTheme.color,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                    ),
                   ),
                 ),
                 SizedBox(
@@ -153,31 +148,31 @@ class _AdminRFQScreenState extends State<AdminRFQScreen> {
                 const SizedBox(height: 4),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No RFQs found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(
+                          icon: Icons.request_quote_outlined,
+                          title: 'No RFQs found',
+                          subtitle: 'Try adjusting your search or status filter.',
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final rfq = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: statusColor(rfq.status),
                                 onTap: () => _showDetails(rfq),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          Expanded(child: Text(rfq.productName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                                          StatusBadge(status: rfq.status),
+                                          AdminIconBadge(icon: Icons.request_quote_outlined, color: const Color(0xFF2563EB), size: 36),
+                                          const SizedBox(width: 10),
+                                          Expanded(child: Text(rfq.productName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                          const SizedBox(width: 8),
+                                          AdminStatusBadge(label: statusLabel(rfq.status), color: statusColor(rfq.status)),
                                         ],
                                       ),
                                       const SizedBox(height: 6),
@@ -208,7 +203,6 @@ class _AdminRFQScreenState extends State<AdminRFQScreen> {
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -217,6 +211,7 @@ class _AdminRFQScreenState extends State<AdminRFQScreen> {
               ],
             );
           },
+        ),
         ),
       ),
     );

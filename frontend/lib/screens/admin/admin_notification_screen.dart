@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _targets = [
   (null, 'All Users'),
@@ -86,15 +87,17 @@ class _AdminNotificationScreenState extends State<AdminNotificationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Notification Management')),
-      body: SingleChildScrollView(
+      appBar: const AdminGradientAppBar(title: 'Notification Management'),
+      body: AdminPageBackground(
+        child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _SectionCard(
+            AdminReveal(index: 0, child: _SectionCard(
               title: 'Target Audience',
               icon: Icons.group_outlined,
+              accent: const Color(0xFF2563EB),
               children: [
                 Wrap(
                   spacing: 8,
@@ -111,21 +114,23 @@ class _AdminNotificationScreenState extends State<AdminNotificationScreen> {
                       .toList(),
                 ),
               ],
-            ),
+            )),
             const SizedBox(height: 14),
-            _SectionCard(
+            AdminReveal(index: 1, child: _SectionCard(
               title: 'Message',
               icon: Icons.edit_note_outlined,
+              accent: const Color(0xFF7C3AED),
               children: [
                 TextField(controller: _titleCtrl, decoration: const InputDecoration(labelText: 'Title'), maxLength: 100),
                 const SizedBox(height: 8),
                 TextField(controller: _bodyCtrl, decoration: const InputDecoration(labelText: 'Message'), maxLines: 4, maxLength: 500),
               ],
-            ),
+            )),
             const SizedBox(height: 14),
-            _SectionCard(
+            AdminReveal(index: 2, child: _SectionCard(
               title: 'Channels',
               icon: Icons.send_outlined,
+              accent: const Color(0xFF16A34A),
               children: [
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
@@ -144,7 +149,7 @@ class _AdminNotificationScreenState extends State<AdminNotificationScreen> {
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
               ],
-            ),
+            )),
             const SizedBox(height: 20),
             ElevatedButton.icon(
               onPressed: _sending ? null : _send,
@@ -154,6 +159,7 @@ class _AdminNotificationScreenState extends State<AdminNotificationScreen> {
           ],
         ),
       ),
+      ),
     );
   }
 }
@@ -162,25 +168,19 @@ class _SectionCard extends StatelessWidget {
   final String title;
   final IconData icon;
   final List<Widget> children;
-  const _SectionCard({required this.title, required this.icon, required this.children});
+  final Color accent;
+  const _SectionCard({required this.title, required this.icon, required this.children, this.accent = AppColors.primary});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AdminCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
+      margin: EdgeInsets.zero,
+      accent: accent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(icon, size: 17, color: AppColors.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5))),
-          ]),
+          AdminSectionHeader(icon: icon, title: title, color: accent),
           const SizedBox(height: 14),
           ...children,
         ],

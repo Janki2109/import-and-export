@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _roleTabs = [
   (null, 'All'),
@@ -45,11 +46,11 @@ class _AdminWalletScreenState extends State<AdminWalletScreen> with SingleTicker
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Wallet Management'),
+      appBar: AdminGradientAppBar(
+        title: 'Wallet Management',
         bottom: TabBar(controller: _tabController, isScrollable: true, tabs: _roleTabs.map((t) => Tab(text: t.$2)).toList(), onTap: (_) => setState(() {})),
       ),
-      body: RefreshIndicator(
+      body: AdminPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminWalletRow>>(
           future: _future,
@@ -85,45 +86,36 @@ class _AdminWalletScreenState extends State<AdminWalletScreen> with SingleTicker
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                  child: TextField(
+                  child: AdminSearchField(
+                    hint: 'Search by name',
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      hintText: 'Search by name',
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Theme.of(context).cardTheme.color,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                    ),
                   ),
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No wallets found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(icon: Icons.account_balance_wallet_outlined, title: 'No wallets found.', subtitle: 'Try a different search or role tab.')
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final w = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 10),
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: Column(
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: const Color(0xFF16A34A),
+                                margin: const EdgeInsets.only(bottom: 10),
+                                child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
                                     children: [
-                                      CircleAvatar(radius: 18, backgroundColor: AppColors.primary.withValues(alpha: 0.12), child: Text(w.fullName.isNotEmpty ? w.fullName[0].toUpperCase() : '?', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800))),
+                                      AdminIconBadge(icon: Icons.account_balance_wallet, color: const Color(0xFF16A34A), size: 36),
                                       const SizedBox(width: 10),
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            Text(w.fullName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                                            Text(w.fullName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
                                             Text(w.role.toUpperCase(), style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5)),
                                           ],
                                         ),
@@ -140,6 +132,7 @@ class _AdminWalletScreenState extends State<AdminWalletScreen> with SingleTicker
                                     ],
                                   ),
                                 ],
+                                ),
                               ),
                             );
                           },
@@ -149,7 +142,7 @@ class _AdminWalletScreenState extends State<AdminWalletScreen> with SingleTicker
             );
           },
         ),
-      ),
+      )),
     );
   }
 

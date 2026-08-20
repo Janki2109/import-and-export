@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Admin queue for reviewing KYC submissions — four tabs (Pending / Approved / Rejected /
 /// Need Re-upload), each showing the applicant's identity (avatar, name, role, country,
@@ -135,8 +136,8 @@ class _AdminKYCReviewScreenState extends State<AdminKYCReviewScreen> with Single
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('KYC Review'),
+      appBar: AdminGradientAppBar(
+        title: 'KYC Review',
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
@@ -144,17 +145,19 @@ class _AdminKYCReviewScreenState extends State<AdminKYCReviewScreen> with Single
           tabs: _kTabs.map((t) => Tab(icon: Icon(t.icon, size: 18), text: t.label)).toList(),
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: List.generate(_kTabs.length, (i) => _KYCList(
-              future: _futures[i] ??= _adminService.listKYCByStatus(_kTabs[i].status),
-              tabIndex: i,
-              onRefresh: () async => _refresh(i),
-              onOpenDetails: (k) => _openDetails(k, i),
-              onApprove: (userId) => _approve(userId, i),
-              onReject: (userId) => _reject(userId, i),
-              onRequestReupload: (userId) => _requestReupload(userId, i),
-            )),
+      body: AdminPageBackground(
+        child: TabBarView(
+          controller: _tabController,
+          children: List.generate(_kTabs.length, (i) => _KYCList(
+                future: _futures[i] ??= _adminService.listKYCByStatus(_kTabs[i].status),
+                tabIndex: i,
+                onRefresh: () async => _refresh(i),
+                onOpenDetails: (k) => _openDetails(k, i),
+                onApprove: (userId) => _approve(userId, i),
+                onReject: (userId) => _reject(userId, i),
+                onRequestReupload: (userId) => _requestReupload(userId, i),
+              )),
+        ),
       ),
     );
   }
@@ -197,22 +200,10 @@ class _KYCList extends StatelessWidget {
           if (items.isEmpty) {
             return ListView(
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(48),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(color: AppColors.success.withValues(alpha: 0.1), shape: BoxShape.circle),
-                        child: Icon(tab.icon, size: 34, color: AppColors.success),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text('Nothing here', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                      const SizedBox(height: 6),
-                      Text('No ${tab.label.toLowerCase()} KYC submissions right now.', style: const TextStyle(color: AppColors.textSecondary)),
-                    ],
-                  ),
+                AdminEmptyState(
+                  icon: tab.icon,
+                  title: 'Nothing here',
+                  subtitle: 'No ${tab.label.toLowerCase()} KYC submissions right now.',
                 ),
               ],
             );
@@ -222,13 +213,16 @@ class _KYCList extends StatelessWidget {
             itemCount: items.length,
             itemBuilder: (context, i) {
               final k = items[i] as Map<String, dynamic>;
-              return _KYCCard(
-                kyc: k,
-                tabIndex: tabIndex,
-                onTap: () => onOpenDetails(k),
-                onApprove: () => onApprove(k['user_id']),
-                onReject: () => onReject(k['user_id']),
-                onRequestReupload: () => onRequestReupload(k['user_id']),
+              return AdminReveal(
+                index: i,
+                child: _KYCCard(
+                  kyc: k,
+                  tabIndex: tabIndex,
+                  onTap: () => onOpenDetails(k),
+                  onApprove: () => onApprove(k['user_id']),
+                  onReject: () => onReject(k['user_id']),
+                  onRequestReupload: () => onRequestReupload(k['user_id']),
+                ),
               );
             },
           );
@@ -265,14 +259,11 @@ class _KYCCard extends StatelessWidget {
     final createdAt = kyc['created_at'] as String?;
     final isPending = tabIndex == 0;
 
-    return Card(
+    return AdminCard(
       margin: const EdgeInsets.only(bottom: 14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+      onTap: onTap,
+      accent: const Color(0xFF7C3AED),
+      child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
@@ -288,7 +279,7 @@ class _KYCCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
                         Wrap(
                           spacing: 6,
@@ -328,8 +319,6 @@ class _KYCCard extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }
@@ -378,11 +367,7 @@ class _StatusChip extends StatelessWidget {
         color = AppColors.textSecondary;
         label = 'Pending';
     }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-      child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
-    );
+    return AdminStatusBadge(label: label, color: color);
   }
 }
 
@@ -415,8 +400,9 @@ class _KYCDetailScreen extends StatelessWidget {
     final isPending = tabIndex == 0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('KYC Details')),
-      body: ListView(
+      appBar: const AdminGradientAppBar(title: 'KYC Details'),
+      body: AdminPageBackground(
+        child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           _DetailSection(title: 'Applicant', rows: [
@@ -449,17 +435,21 @@ class _KYCDetailScreen extends StatelessWidget {
           ]),
           if (docs.isNotEmpty) ...[
             const SizedBox(height: 20),
-            const Text('Uploaded Documents', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            const AdminSectionHeader(icon: Icons.folder_outlined, title: 'Uploaded Documents', color: Color(0xFF0EA5E9)),
             const SizedBox(height: 10),
-            ...docs.map((d) => Card(
+            ...docs.map((d) => AdminCard(
                   margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    leading: const Icon(Icons.description_outlined, color: AppColors.primary),
-                    title: Text(d.key),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => _DocumentViewerScreen(title: d.key, url: d.value),
-                    )),
+                  accent: const Color(0xFF0EA5E9),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => _DocumentViewerScreen(title: d.key, url: d.value),
+                  )),
+                  child: Row(
+                    children: [
+                      const AdminIconBadge(icon: Icons.description_outlined, color: Color(0xFF0EA5E9), size: 36),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(d.key, style: const TextStyle(fontWeight: FontWeight.w600))),
+                      const Icon(Icons.chevron_right),
+                    ],
                   ),
                 )),
           ],
@@ -504,6 +494,7 @@ class _KYCDetailScreen extends StatelessWidget {
               ],
             ),
         ],
+        ),
       ),
     );
   }
@@ -516,9 +507,8 @@ class _DetailSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return AdminCard(
+      accent: const Color(0xFF2563EB),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -536,7 +526,6 @@ class _DetailSection extends StatelessWidget {
                 )),
           ],
         ),
-      ),
     );
   }
 }

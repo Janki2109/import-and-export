@@ -54,9 +54,26 @@ IconData txnKindIcon(TxnKind k) {
 
 bool isTxnPending(LedgerEntry t) => classifyTxn(t) == TxnKind.withdrawal && (t.referenceId?.startsWith('MANUAL-PENDING') ?? false);
 
-String txnStatusLabel(LedgerEntry t) => isTxnPending(t) ? 'Pending' : 'Completed';
+/// Statuses shown to the user: Refunded (description says so — a real refund entry),
+/// Pending (an unpaid-out withdrawal request), otherwise Completed — every other ledger
+/// row exists only because it was already committed. "Failed"/"On Hold" aren't offered as
+/// real per-transaction statuses since the schema has no such field for them; aggregate
+/// escrow figures (pending/released) are shown separately where the backend does provide them.
+String txnStatusLabel(LedgerEntry t) {
+  if (classifyTxn(t) == TxnKind.refund) return 'Refunded';
+  if (isTxnPending(t)) return 'Pending';
+  return 'Completed';
+}
 
-Color txnStatusColor(LedgerEntry t) => isTxnPending(t) ? AppColors.warning : AppColors.success;
+Color txnStatusColor(LedgerEntry t) {
+  if (classifyTxn(t) == TxnKind.refund) return AppColors.primary;
+  if (isTxnPending(t)) return AppColors.warning;
+  return AppColors.success;
+}
+
+/// Received/Sent — the direction framing used throughout the Transaction History screen,
+/// derived directly from the real entry_type field (credit = money in, debit = money out).
+String txnDirectionLabel(LedgerEntry t) => t.entryType == 'credit' ? 'Received' : 'Sent';
 
 /// Payment method is inferred from the transaction's own description — the backend never
 /// tracks UPI/Card distinctly (it removed the payment-gateway integration entirely), so

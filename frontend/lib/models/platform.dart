@@ -137,16 +137,56 @@ class LogisticsPartner {
 
 class Advertisement {
   final String id;
+  final String advertiserId;
+  final String? advertiserName;
+  final String? advertiserRole;
   final String title;
-  final String imageUrl;
+  final String? description;
+  final String? category;
+  final String mediaType; // "image" | "video"
+  final String imageUrl; // holds the video URL too when mediaType == "video"
+  final double? price;
+  final String? contactInfo;
+  final int views;
   final String? targetUrl;
+  final bool isActive;
+  final DateTime createdAt;
 
-  Advertisement({required this.id, required this.title, required this.imageUrl, this.targetUrl});
+  Advertisement({
+    required this.id,
+    required this.advertiserId,
+    this.advertiserName,
+    this.advertiserRole,
+    required this.title,
+    this.description,
+    this.category,
+    this.mediaType = 'image',
+    required this.imageUrl,
+    this.price,
+    this.contactInfo,
+    this.views = 0,
+    this.targetUrl,
+    this.isActive = true,
+    required this.createdAt,
+  });
+
+  bool get isVideo => mediaType == 'video';
 
   factory Advertisement.fromJson(Map<String, dynamic> json) => Advertisement(
         id: json['id'],
+        advertiserId: json['advertiser_id'] ?? '',
+        advertiserName: json['advertiser_name'],
+        advertiserRole: json['advertiser_role'],
         title: json['title'],
+        description: json['description'],
+        category: json['category'],
+        mediaType: json['media_type'] ?? 'image',
         imageUrl: json['image_url'],
+        price: (json['price'] as num?)?.toDouble(),
+        contactInfo: json['contact_info'],
+        views: (json['views'] as num?)?.toInt() ?? 0,
         targetUrl: json['target_url'],
+        isActive: json['is_active'] ?? true,
+        createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : DateTime.now(),
       );
 }

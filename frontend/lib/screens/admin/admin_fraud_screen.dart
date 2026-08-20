@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Journey 12 — "Fraud Signals" (live, recomputed every load) and "Security Flags" (persisted,
 /// reviewable/resolvable over time) are related but distinct: signals are ephemeral heuristics,
@@ -75,13 +76,15 @@ class _AdminFraudScreenState extends State<AdminFraudScreen> with SingleTickerPr
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Fraud & Security'),
+      appBar: AdminGradientAppBar(
+        title: 'Fraud & Security',
         bottom: TabBar(controller: _tabController, tabs: const [Tab(text: 'Live Signals'), Tab(text: 'Security Flags')]),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildSignalsTab(), _buildFlagsTab()],
+      body: AdminPageBackground(
+        child: TabBarView(
+          controller: _tabController,
+          children: [_buildSignalsTab(), _buildFlagsTab()],
+        ),
       ),
     );
   }
@@ -100,20 +103,37 @@ class _AdminFraudScreenState extends State<AdminFraudScreen> with SingleTickerPr
           }
           final signals = snapshot.data ?? [];
           if (signals.isEmpty) {
-            return const Center(child: Text('No fraud signals detected.', style: TextStyle(color: AppColors.textSecondary)));
+            return const AdminEmptyState(icon: Icons.security_outlined, title: 'No fraud signals detected.');
           }
           return ListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: signals.length,
             itemBuilder: (context, i) {
               final s = signals[i];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                child: ListTile(
-                  leading: Icon(Icons.warning_amber_rounded, color: _severityColor(s.severity)),
-                  title: Text(s.description),
-                  subtitle: Text(s.email ?? s.userId ?? s.type),
-                  trailing: Chip(label: Text(s.severity), backgroundColor: _severityColor(s.severity).withValues(alpha: 0.12)),
+              final color = _severityColor(s.severity);
+              return AdminReveal(
+                index: i,
+                child: AdminCard(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  accent: color,
+                  child: Row(
+                    children: [
+                      AdminIconBadge(icon: Icons.warning_amber_rounded, color: color, size: 36),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.description, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 3),
+                            Text(s.email ?? s.userId ?? s.type, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      AdminStatusBadge(label: s.severity, color: color),
+                    ],
+                  ),
                 ),
               );
             },
@@ -155,22 +175,39 @@ class _AdminFraudScreenState extends State<AdminFraudScreen> with SingleTickerPr
                 }
                 final flags = snapshot.data ?? [];
                 if (flags.isEmpty) {
-                  return Center(child: Text(_showResolvedOnly ? 'No resolved flags.' : 'No open security flags.', style: const TextStyle(color: AppColors.textSecondary)));
+                  return AdminEmptyState(icon: Icons.shield_outlined, title: _showResolvedOnly ? 'No resolved flags.' : 'No open security flags.');
                 }
                 return ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: flags.length,
                   itemBuilder: (context, i) {
                     final f = flags[i];
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        leading: Icon(Icons.shield_outlined, color: _severityColor(f.severity)),
-                        title: Text(f.description),
-                        subtitle: Text('${f.rule} · ${f.createdAt.toLocal().toString().split('.').first}'),
-                        trailing: f.resolved
-                            ? const Chip(label: Text('Resolved'), backgroundColor: AppColors.success)
-                            : OutlinedButton(onPressed: () => _resolveFlag(f), child: const Text('Resolve')),
+                    final color = _severityColor(f.severity);
+                    return AdminReveal(
+                      index: i,
+                      child: AdminCard(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        accent: color,
+                        child: Row(
+                          children: [
+                            AdminIconBadge(icon: Icons.shield_outlined, color: color, size: 36),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(f.description, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  const SizedBox(height: 3),
+                                  Text('${f.rule} · ${f.createdAt.toLocal().toString().split('.').first}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            f.resolved
+                                ? const AdminStatusBadge(label: 'Resolved', color: AppColors.success)
+                                : OutlinedButton(onPressed: () => _resolveFlag(f), child: const Text('Resolve')),
+                          ],
+                        ),
                       ),
                     );
                   },

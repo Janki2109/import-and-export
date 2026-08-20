@@ -18,10 +18,12 @@ type ChatService struct {
 	hub          *ChatHub
 	cipher       *security.AESCipher // nil = encryption not configured (dev/test only)
 	docSecurity  *DocumentSecurityService
+	whatsApp     *WhatsAppService // nil-safe: SendSupportMessageAsync no-ops if not configured
+	notifySvc    *NotificationService
 }
 
-func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, orderRepo *repository.OrderRepository, shipmentRepo *repository.ShipmentRepository, hub *ChatHub, cipher *security.AESCipher, docSecurity *DocumentSecurityService) *ChatService {
-	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, orderRepo: orderRepo, shipmentRepo: shipmentRepo, hub: hub, cipher: cipher, docSecurity: docSecurity}
+func NewChatService(chatRepo *repository.ChatRepository, userRepo *repository.UserRepository, orderRepo *repository.OrderRepository, shipmentRepo *repository.ShipmentRepository, hub *ChatHub, cipher *security.AESCipher, docSecurity *DocumentSecurityService, whatsApp *WhatsAppService, notifySvc *NotificationService) *ChatService {
+	return &ChatService{chatRepo: chatRepo, userRepo: userRepo, orderRepo: orderRepo, shipmentRepo: shipmentRepo, hub: hub, cipher: cipher, docSecurity: docSecurity, whatsApp: whatsApp, notifySvc: notifySvc}
 }
 
 // resolveAttachmentURL — security hardening: chat file/voice attachments are re-signed fresh
@@ -226,6 +228,41 @@ func (s *ChatService) SendMessage(ctx context.Context, in SendMessageInput) (*mo
 		recipientID = conv.ParticipantTwoID
 	}
 	s.hub.SendToUser(recipientID, map[string]interface{}{"type": "message", "data": msg})
+
+	// Push/in-app notification for the recipient — fires regardless of whether they're online
+	// via WS (that's the live-view channel; this is the "phone in your pocket" channel). A media
+	// message (image/voice/document) has no text `Content` to preview, so fall back to a generic
+	// label rather than showing an empty body.
+	if s.notifySvc != nil {
+		preview := "You have a new message"
+		if in.Content != nil && *in.Content != "" {
+			preview = *in.Content
+			if len(preview) > 80 {
+				preview = preview[:80] + "…"
+			}
+		}
+		senderName := "Someone"
+		if sender, err := s.userRepo.GetByID(ctx, in.SenderID); err == nil && sender != nil {
+			senderName = sender.FullName
+		}
+		convID := in.ConversationID
+		_ = s.notifySvc.Send(ctx, recipientID, "New Message from "+senderName, preview, "message", &convID)
+	}
+
+	// Help & Support: every conversation is with the platform admin (allowedPair enforces
+	// this — trade-partner-to-trade-partner chat was removed), so any text message going TO
+	// the admin is by definition a support message. Forward it to the configured WhatsApp
+	// number; a nil/unconfigured service or non-text message is a silent no-op.
+	if s.whatsApp != nil && in.Content != nil && *in.Content != "" {
+		if recipient, err := s.userRepo.GetByID(ctx, recipientID); err == nil && recipient != nil && recipient.Role == models.RoleAdmin {
+			sender, err := s.userRepo.GetByID(ctx, in.SenderID)
+			senderName := ""
+			if err == nil && sender != nil {
+				senderName = sender.FullName
+			}
+			s.whatsApp.SendSupportMessageAsync(senderName, *in.Content)
+		}
+	}
 
 	return msg, nil
 }

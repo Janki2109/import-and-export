@@ -41,6 +41,7 @@ dependencies:
 
   # Image picking (KYC docs, POD upload)
   image_picker: ^1.1.2
+  video_player: ^2.9.2
 
   # On-device OCR for KYC docs — auto-fills PAN/GST number fields from the uploaded photo
   google_mlkit_text_recognition: ^0.13.1
@@ -73,6 +74,7 @@ dependencies:
   # Push notifications
   firebase_core: ^3.1.0
   firebase_messaging: ^15.0.1
+  flutter_local_notifications: ^17.2.3
 
 dev_dependencies:
   flutter_test:

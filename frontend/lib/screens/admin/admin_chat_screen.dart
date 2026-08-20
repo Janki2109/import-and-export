@@ -3,6 +3,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../models/chat.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Chat Management — every conversation on the platform, with both participants, last
 /// message, and status. View Conversation reads messages read-only (admin isn't a
@@ -95,7 +96,7 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
               ),
               Expanded(
                 child: parsed.isEmpty
-                    ? const Center(child: Text('No messages yet.', style: TextStyle(color: AppColors.textSecondary)))
+                    ? const AdminEmptyState(icon: Icons.forum_outlined, title: 'No messages yet.')
                     : ListView.builder(
                         controller: scrollCtrl,
                         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -138,8 +139,9 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Chat Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Chat Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminConversationRow>>(
           future: _future,
@@ -162,15 +164,9 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: TextField(
+                  child: AdminSearchField(
+                    hint: 'Search by participant name',
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      hintText: 'Search by participant name',
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Theme.of(context).cardTheme.color,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                    ),
                   ),
                 ),
                 Padding(
@@ -184,36 +180,25 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No conversations found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(icon: Icons.chat_bubble_outline, title: 'No conversations found.')
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final c = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: const Color(0xFF7C3AED),
                                 onTap: () => _viewConversation(c),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          Expanded(child: Text('${c.userAName} (${c.userARole}) ↔ ${c.userBName} (${c.userBRole})', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                          Expanded(child: Text('${c.userAName} (${c.userARole}) ↔ ${c.userBName} (${c.userBRole})', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                                           if (c.isArchived)
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                              decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(20)),
-                                              child: const Text('Archived', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700)),
-                                            ),
+                                            const AdminStatusBadge(label: 'Archived', color: Colors.grey),
                                         ],
                                       ),
                                       if ((c.userAEmail ?? '').isNotEmpty || (c.userBEmail ?? '').isNotEmpty) ...[
@@ -275,7 +260,6 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -284,6 +268,7 @@ class _AdminChatScreenState extends State<AdminChatScreen> {
               ],
             );
           },
+        ),
         ),
       ),
     );

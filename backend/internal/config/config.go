@@ -69,8 +69,16 @@ type Config struct {
 	LocalStorageRoot     string // filesystem root for local-provider uploads
 	StoragePublicBaseURL string // optional — override the scheme+host used to build local upload/download URLs; blank = derive from the incoming request's Host header (works automatically for LAN dev and behind a reverse proxy)
 
-	GroqAPIKey string
-	GroqModel  string
+	GroqAPIKey  string
+	GroqAPIKey2 string // optional second key — AIChatService retries with this if the primary key's request fails (e.g. rate limit/quota exhausted)
+	GroqModel   string
+
+	// WhatsApp Cloud API — used by WhatsAppService to forward Help & Support messages (any
+	// message sent to the platform admin, since chat is support-only) to a real phone number.
+	// All three empty = forwarding silently disabled (chat itself still works normally).
+	WhatsAppAccessToken   string
+	WhatsAppPhoneNumberID string
+	SupportWhatsAppNumber string
 
 	// ExchangeRateAPIKey — exchangerate-api.com key used by ExchangeRateService for the RFQ
 	// Pricing section's live currency conversion (INR/USD/EUR/AED). Empty = conversion
@@ -194,8 +202,13 @@ func Load() *Config {
 		LocalStorageRoot:     getEnv("LOCAL_STORAGE_ROOT", "./storage/uploads"),
 		StoragePublicBaseURL: getEnv("STORAGE_PUBLIC_BASE_URL", ""),
 
-		GroqAPIKey: getEnv("GROQ_API_KEY", ""),
-		GroqModel:  getEnv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+		GroqAPIKey:  getEnv("GROQ_API_KEY", ""),
+		GroqAPIKey2: getEnv("GROQ_API_KEY_2", ""),
+		GroqModel:   getEnv("GROQ_MODEL", "openai/gpt-oss-120b"),
+
+		WhatsAppAccessToken:   getEnv("WHATSAPP_ACCESS_TOKEN", ""),
+		WhatsAppPhoneNumberID: getEnv("WHATSAPP_PHONE_NUMBER_ID", ""),
+		SupportWhatsAppNumber: getEnv("SUPPORT_WHATSAPP_NUMBER", ""),
 
 		ExchangeRateAPIKey: getEnv("EXCHANGE_RATE_API_KEY", ""),
 

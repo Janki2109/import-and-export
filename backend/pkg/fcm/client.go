@@ -32,7 +32,18 @@ func NewClient(ctx context.Context, serviceAccountJSON []byte, projectID string)
 	}, nil
 }
 
+// AndroidChannelID must match the channel created client-side in push_notification_service.dart
+// so Android plays the configured custom sound/vibration instead of falling back to defaults.
+const AndroidChannelID = "onebharat_notifications"
+
 // SendToToken pushes a data+notification payload to a single device's FCM registration token.
+// The android block pins the notification to our custom channel — on Android 8+ the channel
+// (created client-side in push_notification_service.dart with the matching custom sound file)
+// is what actually controls the sound; the "sound" field here only matters pre-O, kept in sync
+// for completeness. iOS ("apns" block) still uses the placeholder "default" system sound: the
+// project's iOS Firebase config (GoogleService-Info.plist) isn't set up yet, so there's no iOS
+// bundle to drop a custom sound file into — once that's done, add the converted .caf file to
+// the iOS Runner target and change "default" below to its filename.
 func (c *Client) SendToToken(ctx context.Context, token, title, body string, data map[string]string) error {
 	url := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", c.projectID)
 
@@ -44,6 +55,20 @@ func (c *Client) SendToToken(ctx context.Context, token, title, body string, dat
 				"body":  body,
 			},
 			"data": data,
+			"android": map[string]interface{}{
+				"priority": "high",
+				"notification": map[string]interface{}{
+					"channel_id": AndroidChannelID,
+					"sound":      "notification_sound",
+				},
+			},
+			"apns": map[string]interface{}{
+				"payload": map[string]interface{}{
+					"aps": map[string]interface{}{
+						"sound": "default",
+					},
+				},
+			},
 		},
 	}
 	reqBody, err := json.Marshal(payload)

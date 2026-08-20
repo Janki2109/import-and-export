@@ -4,6 +4,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
 import '../../widgets/status_badge.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Admin Escrow Wallet — every order with a payment (self-declared via UPI, held in escrow
 /// until release), with the three direct admin actions the workflow requires: Release, Hold,
@@ -118,19 +119,32 @@ class _AdminEscrowScreenState extends State<AdminEscrowScreen> {
               const SizedBox(height: 12),
               Expanded(
                 child: history.isEmpty
-                    ? const Center(child: Text('No audit entries yet.', style: TextStyle(color: AppColors.textSecondary)))
+                    ? const AdminEmptyState(icon: Icons.history_toggle_off, title: 'No audit entries yet.')
                     : ListView.builder(
                         controller: scrollController,
                         itemCount: history.length,
                         itemBuilder: (context, i) {
                           final h = history[i];
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              dense: true,
-                              leading: const Icon(Icons.history, color: AppColors.primary),
-                              title: Text(_actionLabel(h['action'] ?? '')),
-                              subtitle: Text((h['created_at'] ?? '').toString().split('.').first.replaceFirst('T', ' ')),
+                          return AdminReveal(
+                            index: i,
+                            child: AdminCard(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              accent: const Color(0xFF16A34A),
+                              child: Row(
+                                children: [
+                                  const AdminIconBadge(icon: Icons.history, color: Color(0xFF16A34A), size: 34),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(_actionLabel(h['action'] ?? ''), style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        Text((h['created_at'] ?? '').toString().split('.').first.replaceFirst('T', ' '), style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           );
                         },
@@ -174,64 +188,69 @@ class _AdminEscrowScreenState extends State<AdminEscrowScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Escrow Payments')),
-      body: RefreshIndicator(
-        onRefresh: () async => _refresh(),
-        child: FutureBuilder<(EscrowSummary, List<EscrowOrderRow>)>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}'));
-            }
-            final (summary, rows) = snapshot.data!;
-            return ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _SummaryGrid(summary: summary),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 36,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _filters.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, i) {
-                      final f = _filters[i];
-                      final selected = (f == 'All' && _statusFilter == null) || f == _statusFilter;
-                      return ChoiceChip(
-                        label: Text(f == 'All' ? 'All' : statusLabel(f)),
-                        selected: selected,
-                        onSelected: (_) => setState(() {
-                          _statusFilter = f == 'All' ? null : f;
-                          _future = _load();
-                        }),
-                        selectedColor: AppColors.primary,
-                        labelStyle: TextStyle(color: selected ? Colors.white : AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 12.5),
-                      );
-                    },
+      appBar: const AdminGradientAppBar(title: 'Escrow Payments'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
+          onRefresh: () async => _refresh(),
+          child: FutureBuilder<(EscrowSummary, List<EscrowOrderRow>)>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text('Error: ${snapshot.error}'));
+              }
+              final (summary, rows) = snapshot.data!;
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _SummaryGrid(summary: summary),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 36,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _filters.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) {
+                        final f = _filters[i];
+                        final selected = (f == 'All' && _statusFilter == null) || f == _statusFilter;
+                        return ChoiceChip(
+                          label: Text(f == 'All' ? 'All' : statusLabel(f)),
+                          selected: selected,
+                          onSelected: (_) => setState(() {
+                            _statusFilter = f == 'All' ? null : f;
+                            _future = _load();
+                          }),
+                          selectedColor: AppColors.primary,
+                          labelStyle: TextStyle(color: selected ? Colors.white : AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 12.5),
+                        );
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                if (rows.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 40),
-                    child: Center(child: Text('No escrow orders match this filter.', style: TextStyle(color: AppColors.textSecondary))),
-                  )
-                else
-                  ...rows.map((row) => _EscrowCard(
-                        row: row,
-                        busy: _busy,
-                        onRelease: () => _release(row),
-                        onHold: () => _hold(row),
-                        onRefund: () => _refund(row),
-                        onHistory: () => _showHistory(row),
-                      )),
-              ],
-            );
-          },
+                  const SizedBox(height: 16),
+                  if (rows.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 40),
+                      child: AdminEmptyState(icon: Icons.account_balance_wallet_outlined, title: 'No escrow orders match this filter.'),
+                    )
+                  else
+                    ...rows.asMap().entries.map((entry) => AdminReveal(
+                          index: entry.key,
+                          child: _EscrowCard(
+                            row: entry.value,
+                            busy: _busy,
+                            onRelease: () => _release(entry.value),
+                            onHold: () => _hold(entry.value),
+                            onRefund: () => _refund(entry.value),
+                            onHistory: () => _showHistory(entry.value),
+                          ),
+                        )),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -261,17 +280,17 @@ class _SummaryGrid extends StatelessWidget {
   }
 
   Widget _card(String label, double value, IconData icon, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [Icon(icon, size: 15, color: color), const SizedBox(width: 6), Expanded(child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5), maxLines: 1, overflow: TextOverflow.ellipsis))]),
-            const Spacer(),
-            Text('₹${value.toStringAsFixed(2)}', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: color)),
-          ],
-        ),
+    return AdminCard(
+      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.zero,
+      accent: color,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [Icon(icon, size: 15, color: color), const SizedBox(width: 6), Expanded(child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5), maxLines: 1, overflow: TextOverflow.ellipsis))]),
+          const Spacer(),
+          Text('₹${value.toStringAsFixed(2)}', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: color)),
+        ],
       ),
     );
   }
@@ -291,11 +310,10 @@ class _EscrowCard extends StatelessWidget {
     final canAct = row.escrowStatus == 'held' || row.escrowStatus == 'on_hold';
     final now = DateTime.now();
     final dueSoon = row.escrowStatus == 'held' && row.releaseDueAt != null;
-    return Card(
+    return AdminCard(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
+      accent: const Color(0xFF16A34A),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -374,7 +392,6 @@ class _EscrowCard extends StatelessWidget {
             ],
           ],
         ),
-      ),
     );
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Withdrawal Requests — every withdrawal debit from the ledger, with Approve (mark as
 /// paid — a pure audit-reference update) and Reject (refunds the amount back to the user's
@@ -141,8 +142,8 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Withdrawal Requests')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Withdrawal Requests'),
+      body: AdminPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminWithdrawalRow>>(
           future: _future,
@@ -177,25 +178,18 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No withdrawal requests here.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(icon: Icons.request_quote_outlined, title: 'No withdrawal requests here.', subtitle: 'Try a different status filter.')
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final w = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: const Color(0xFFEA580C),
                                 onTap: () => _showDetails(w),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
@@ -204,7 +198,7 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
                                             child: Column(
                                               crossAxisAlignment: CrossAxisAlignment.start,
                                               children: [
-                                                Text(w.userName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                                Text(w.userName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
                                                 Text(w.role.toUpperCase(), style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5)),
                                               ],
                                             ),
@@ -215,11 +209,7 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
                                       const SizedBox(height: 8),
                                       Row(
                                         children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                                            decoration: BoxDecoration(color: _statusColor(w.status).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                                            child: Text(w.status.toUpperCase(), style: TextStyle(color: _statusColor(w.status), fontSize: 10, fontWeight: FontWeight.w700)),
-                                          ),
+                                          AdminStatusBadge(label: w.status.toUpperCase(), color: _statusColor(w.status)),
                                           const SizedBox(width: 8),
                                           Text(w.createdAt.toLocal().toString().split(' ').first, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
                                         ],
@@ -250,7 +240,6 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
                                       ],
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -260,7 +249,7 @@ class _AdminWithdrawalScreenState extends State<AdminWithdrawalScreen> {
             );
           },
         ),
-      ),
+      )),
     );
   }
 

@@ -55,3 +55,22 @@ func (h *NotificationHandler) RegisterDevice(c *gin.Context) {
 	}
 	response.Success(c, http.StatusOK, gin.H{"message": "device registered"})
 }
+
+type unregisterDeviceRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// UnregisterDevice — Flutter calls this on logout so this device stops receiving pushes for
+// the account that just signed out (important on shared/reused devices).
+func (h *NotificationHandler) UnregisterDevice(c *gin.Context) {
+	var req unregisterDeviceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.svc.UnregisterDevice(c.Request.Context(), req.Token); err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "device unregistered"})
+}

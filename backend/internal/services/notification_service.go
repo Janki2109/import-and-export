@@ -53,8 +53,12 @@ func (s *NotificationService) Send(ctx context.Context, userID, title, body, not
 		log.Printf("push: could not list device tokens for user %s: %v", userID, err)
 		return nil
 	}
+	data := map[string]string{"type": notifType}
+	if referenceID != nil {
+		data["reference_id"] = *referenceID
+	}
 	for _, token := range tokens {
-		if err := s.fcmClient.SendToToken(ctx, token, title, body, map[string]string{"type": notifType}); err != nil {
+		if err := s.fcmClient.SendToToken(ctx, token, title, body, data); err != nil {
 			log.Printf("push: send failed for a device token: %v", err)
 		}
 	}
@@ -64,6 +68,12 @@ func (s *NotificationService) Send(ctx context.Context, userID, title, body, not
 // RegisterDevice — called by the Flutter app right after login with its FCM registration token.
 func (s *NotificationService) RegisterDevice(ctx context.Context, userID, token, platform string) error {
 	return s.deviceTokenRepo.Register(ctx, userID, token, platform)
+}
+
+// UnregisterDevice — called by the Flutter app on logout so a shared/re-logged-in device stops
+// receiving the previous user's pushes.
+func (s *NotificationService) UnregisterDevice(ctx context.Context, token string) error {
+	return s.deviceTokenRepo.Unregister(ctx, token)
 }
 
 func (s *NotificationService) List(ctx context.Context, userID string) ([]models.Notification, error) {

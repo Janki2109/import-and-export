@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/negotiation.dart';
 import '../../services/negotiation_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _statusFilters = [null, 'open', 'accepted', 'rejected', 'expired', 'closed'];
 const _statusLabels = {null: 'All', 'open': 'Open', 'accepted': 'Accepted', 'rejected': 'Rejected', 'expired': 'Expired', 'closed': 'Closed'};
@@ -86,7 +87,7 @@ class _AdminNegotiationScreenState extends State<AdminNegotiationScreen> {
               if (error != null) Text('Error: $error', style: const TextStyle(color: AppColors.error)),
               Expanded(
                 child: offers.isEmpty && error == null
-                    ? const Center(child: Text('No offers recorded.', style: TextStyle(color: AppColors.textSecondary)))
+                    ? const AdminEmptyState(icon: Icons.receipt_long_outlined, title: 'No offers recorded')
                     : ListView.builder(
                         controller: scrollController,
                         itemCount: offers.length,
@@ -143,21 +144,16 @@ class _AdminNegotiationScreenState extends State<AdminNegotiationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Negotiation Center')),
-      body: RefreshIndicator(
+      appBar: AdminGradientAppBar(title: 'Negotiation Center'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            TextField(
+            AdminSearchField(
+              hint: 'Search by RFQ #, product, importer, exporter',
               onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                hintText: 'Search by RFQ #, product, importer, exporter',
-                prefixIcon: const Icon(Icons.search),
-                filled: true,
-                fillColor: Theme.of(context).cardTheme.color,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-              ),
             ),
             const SizedBox(height: 10),
             SizedBox(
@@ -202,41 +198,28 @@ class _AdminNegotiationScreenState extends State<AdminNegotiationScreen> {
                       r.exporterName.toLowerCase().contains(q)).toList();
                 }
                 if (rows.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        children: [
-                          Icon(Icons.handshake_outlined, size: 44, color: AppColors.textSecondary.withValues(alpha: 0.4)),
-                          const SizedBox(height: 12),
-                          const Text('No negotiations found.', style: TextStyle(color: AppColors.textSecondary)),
-                        ],
-                      ),
-                    ),
+                  return const AdminEmptyState(
+                    icon: Icons.handshake_outlined,
+                    title: 'No negotiations found',
+                    subtitle: 'Try adjusting your search or filter.',
                   );
                 }
                 return Column(
-                  children: rows.map((row) {
+                  children: rows.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final row = entry.value;
                     final color = _statusColor(row.status);
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).cardTheme.color,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                      ),
+                    return AdminReveal(
+                      index: i,
+                      child: AdminCard(
+                      accent: color,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
                             children: [
-                              Expanded(child: Text(row.productName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5))),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                                child: Text(row.status.toUpperCase(), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                              ),
+                              Expanded(child: Text(row.productName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                              AdminStatusBadge(label: row.status.toUpperCase(), color: color),
                             ],
                           ),
                           const SizedBox(height: 4),
@@ -269,12 +252,14 @@ class _AdminNegotiationScreenState extends State<AdminNegotiationScreen> {
                           ),
                         ],
                       ),
+                    ),
                     );
                   }).toList(),
                 );
               },
             ),
           ],
+        ),
         ),
       ),
     );

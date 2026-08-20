@@ -13,6 +13,7 @@ import '../../models/trade.dart';
 import '../../services/admin_export.dart';
 import '../../services/admin_service.dart';
 import '../../services/trade_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 import '../../widgets/status_badge.dart';
 import '../shared/order_details_screen.dart';
 
@@ -128,8 +129,9 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Order Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Order Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminOrderRow>>(
           future: _future,
@@ -158,15 +160,9 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: TextField(
+                        child: AdminSearchField(
+                          hint: 'Search order #, importer, exporter, product',
                           onChanged: (v) => setState(() => _query = v),
-                          decoration: InputDecoration(
-                            hintText: 'Search order #, importer, exporter, product',
-                            prefixIcon: const Icon(Icons.search),
-                            filled: true,
-                            fillColor: Theme.of(context).cardTheme.color,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -197,30 +193,27 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                 const SizedBox(height: 4),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No orders found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'No orders found',
+                          subtitle: 'Try adjusting your search or filter.',
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final o = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
                                 onTap: () => _openDetails(o),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                accent: const Color(0xFF2563EB),
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          Expanded(child: Text(o.orderNumber, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5))),
+                                          Expanded(child: Text(o.orderNumber, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                                           StatusBadge(status: o.status),
                                         ],
                                       ),
@@ -263,7 +256,6 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -273,6 +265,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
             );
           },
         ),
+      ),
       ),
     );
   }

@@ -9,7 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_export.dart';
 import '../../services/admin_service.dart';
-import '../../widgets/status_badge.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Quotation Management — every quotation on the platform, with product/importer/exporter
 /// context, status, and CSV/PDF export/download. Backed by the new GET /admin/quotations
@@ -148,8 +148,9 @@ class _AdminQuotationScreenState extends State<AdminQuotationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Quotation Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Quotation Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminQuotationRow>>(
           future: _future,
@@ -178,15 +179,9 @@ class _AdminQuotationScreenState extends State<AdminQuotationScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: TextField(
+                        child: AdminSearchField(
+                          hint: 'Search product, exporter, importer',
                           onChanged: (v) => setState(() => _query = v),
-                          decoration: InputDecoration(
-                            hintText: 'Search product, exporter, importer',
-                            prefixIcon: const Icon(Icons.search),
-                            filled: true,
-                            fillColor: Theme.of(context).cardTheme.color,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -217,61 +212,60 @@ class _AdminQuotationScreenState extends State<AdminQuotationScreen> {
                 const SizedBox(height: 4),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No quotations found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(
+                          icon: Icons.request_quote_outlined,
+                          title: 'No quotations found',
+                          subtitle: 'Try adjusting your search or filter.',
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final q = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            final statusColorValue = statusColor(q.status);
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: statusColorValue,
                                 onTap: () => _showDetails(q),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(child: Text(q.productName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                                          StatusBadge(status: q.status),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text('${q.exporterName} → ${q.importerName}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                      const SizedBox(height: 4),
-                                      Text('₹${q.totalAmount.toStringAsFixed(2)} · Valid until ${q.validityDate.toLocal().toString().split(' ').first}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
-                                      const SizedBox(height: 10),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: OutlinedButton.icon(
-                                              onPressed: () => _showDetails(q),
-                                              style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                                              icon: const Icon(Icons.visibility_outlined, size: 15),
-                                              label: const Text('View'),
-                                            ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        AdminIconBadge(icon: Icons.request_quote_outlined, color: const Color(0xFF2563EB), size: 36),
+                                        const SizedBox(width: 10),
+                                        Expanded(child: Text(q.productName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                        AdminStatusBadge(label: statusLabel(q.status), color: statusColorValue),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text('${q.exporterName} → ${q.importerName}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    const SizedBox(height: 4),
+                                    Text('₹${q.totalAmount.toStringAsFixed(2)} · Valid until ${q.validityDate.toLocal().toString().split(' ').first}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            onPressed: () => _showDetails(q),
+                                            style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                            icon: const Icon(Icons.visibility_outlined, size: 15),
+                                            label: const Text('View'),
                                           ),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: OutlinedButton.icon(
-                                              onPressed: _busy ? null : () => _download(q),
-                                              style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                                              icon: const Icon(Icons.download_outlined, size: 15),
-                                              label: const Text('Download'),
-                                            ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            onPressed: _busy ? null : () => _download(q),
+                                            style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                                            icon: const Icon(Icons.download_outlined, size: 15),
+                                            label: const Text('Download'),
                                           ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ),
                             );
@@ -281,6 +275,7 @@ class _AdminQuotationScreenState extends State<AdminQuotationScreen> {
               ],
             );
           },
+        ),
         ),
       ),
     );

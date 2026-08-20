@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -149,10 +150,26 @@ func NewAdvertisementHandler(adService *services.AdvertisementService) *Advertis
 }
 
 type createAdRequest struct {
-	Title     string  `json:"title" binding:"required"`
-	ImageURL  string  `json:"image_url" binding:"required"`
-	TargetURL *string `json:"target_url"`
-	EndsAt    *string `json:"ends_at"` // YYYY-MM-DD, optional
+	Title       string   `json:"title" binding:"required"`
+	Description *string  `json:"description"`
+	Category    *string  `json:"category"`
+	MediaType   string   `json:"media_type" binding:"required,oneof=image video"`
+	ImageURL    string   `json:"image_url" binding:"required"`
+	Price       *float64 `json:"price"`
+	ContactInfo *string  `json:"contact_info"`
+	TargetURL   *string  `json:"target_url"`
+	EndsAt      *string  `json:"ends_at"` // YYYY-MM-DD, optional
+}
+
+func parseAdEndsAt(raw *string) (*time.Time, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", *raw)
+	if err != nil {
+		return nil, fmt.Errorf("ends_at must be in YYYY-MM-DD format")
+	}
+	return &parsed, nil
 }
 
 func (h *AdvertisementHandler) Create(c *gin.Context) {
@@ -162,19 +179,16 @@ func (h *AdvertisementHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	var endsAt *time.Time
-	if req.EndsAt != nil && *req.EndsAt != "" {
-		parsed, err := time.Parse("2006-01-02", *req.EndsAt)
-		if err != nil {
-			response.Error(c, http.StatusBadRequest, "ends_at must be in YYYY-MM-DD format")
-			return
-		}
-		endsAt = &parsed
+	endsAt, err := parseAdEndsAt(req.EndsAt)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	ad, err := h.adService.Create(c.Request.Context(), services.CreateAdInput{
-		AdvertiserID: advertiserID, Title: req.Title, ImageURL: req.ImageURL, TargetURL: req.TargetURL, EndsAt: endsAt,
+		AdvertiserID: advertiserID, Title: req.Title, Description: req.Description, Category: req.Category,
+		MediaType: req.MediaType, ImageURL: req.ImageURL, Price: req.Price, ContactInfo: req.ContactInfo,
+		TargetURL: req.TargetURL, EndsAt: endsAt,
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
@@ -200,6 +214,88 @@ func (h *AdvertisementHandler) ListMine(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, ads)
+}
+
+// GetByID — Advertisement Details screen; also records a view. Visible to any authenticated
+// user (ads have no per-role visibility restriction, matching ListActive).
+func (h *AdvertisementHandler) GetByID(c *gin.Context) {
+	ad, err := h.adService.GetByID(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if ad == nil {
+		response.Error(c, http.StatusNotFound, "advertisement not found")
+		return
+	}
+	response.Success(c, http.StatusOK, ad)
+}
+
+func (h *AdvertisementHandler) Update(c *gin.Context) {
+	advertiserID := c.GetString("user_id")
+	var req createAdRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	endsAt, err := parseAdEndsAt(req.EndsAt)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ok, err := h.adService.Update(c.Request.Context(), c.Param("id"), services.UpdateAdInput{
+		AdvertiserID: advertiserID, Title: req.Title, Description: req.Description, Category: req.Category,
+		MediaType: req.MediaType, ImageURL: req.ImageURL, Price: req.Price, ContactInfo: req.ContactInfo,
+		TargetURL: req.TargetURL, EndsAt: endsAt,
+	})
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		response.Error(c, http.StatusNotFound, "advertisement not found")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "advertisement updated"})
+}
+
+type setAdActiveRequest struct {
+	IsActive bool `json:"is_active"`
+}
+
+// SetActive — publish/unpublish toggle for the caller's own ad.
+func (h *AdvertisementHandler) SetActive(c *gin.Context) {
+	advertiserID := c.GetString("user_id")
+	var req setAdActiveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ok, err := h.adService.SetActive(c.Request.Context(), c.Param("id"), advertiserID, req.IsActive)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		response.Error(c, http.StatusNotFound, "advertisement not found")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "advertisement updated"})
+}
+
+func (h *AdvertisementHandler) Delete(c *gin.Context) {
+	advertiserID := c.GetString("user_id")
+	ok, err := h.adService.Delete(c.Request.Context(), c.Param("id"), advertiserID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		response.Error(c, http.StatusNotFound, "advertisement not found")
+		return
+	}
+	response.Success(c, http.StatusOK, gin.H{"message": "advertisement deleted"})
 }
 
 // ---------------- Audit Log ----------------

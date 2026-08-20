@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 /// Platform Settings — app branding/contact + SMTP (used by Notification Management's
 /// Email channel). Backed by the new GET/PUT /admin/settings endpoints.
@@ -96,8 +97,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: FutureBuilder<PlatformSettings>(
+      appBar: const AdminGradientAppBar(title: 'Settings'),
+      body: AdminPageBackground(child: FutureBuilder<PlatformSettings>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -114,6 +115,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 _SectionCard(
                   title: 'Application',
                   icon: Icons.apps_outlined,
+                  color: const Color(0xFF2563EB),
                   children: [
                     TextField(controller: _appNameCtrl, decoration: const InputDecoration(labelText: 'Application Name')),
                     const SizedBox(height: 12),
@@ -128,6 +130,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 _SectionCard(
                   title: 'SMTP (used by Notification Management > Email)',
                   icon: Icons.email_outlined,
+                  color: const Color(0xFF7C3AED),
                   children: [
                     TextField(controller: _smtpHostCtrl, decoration: const InputDecoration(labelText: 'SMTP Host')),
                     const SizedBox(height: 12),
@@ -172,7 +175,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             ),
           );
         },
-      ),
+      )),
     );
   }
 }
@@ -181,25 +184,17 @@ class _SectionCard extends StatelessWidget {
   final String title;
   final IconData icon;
   final List<Widget> children;
-  const _SectionCard({required this.title, required this.icon, required this.children});
+  final Color color;
+  const _SectionCard({required this.title, required this.icon, required this.children, this.color = AppColors.primary});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
+    return AdminCard(
+      accent: color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Icon(icon, size: 17, color: AppColors.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5))),
-          ]),
+          AdminSectionHeader(icon: icon, title: title, color: color),
           const SizedBox(height: 14),
           ...children,
         ],

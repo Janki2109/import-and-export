@@ -184,6 +184,7 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			notifications.GET("", h.Notification.List)
 			notifications.POST("/:id/read", h.Notification.MarkRead)
 			notifications.POST("/register-device", h.Notification.RegisterDevice)
+			notifications.POST("/unregister-device", h.Notification.UnregisterDevice)
 		}
 
 		rfqs := protected.Group("/rfqs")
@@ -380,6 +381,10 @@ func Register(r *gin.Engine, h *Handlers, cfg *config.Config, validateAPIKey mid
 			ads.POST("", h.Advertisement.Create)
 			ads.GET("/active", h.Advertisement.ListActive)
 			ads.GET("/mine", h.Advertisement.ListMine)
+			ads.GET("/:id", h.Advertisement.GetByID)
+			ads.PUT("/:id", h.Advertisement.Update)
+			ads.PATCH("/:id/active", h.Advertisement.SetActive)
+			ads.DELETE("/:id", h.Advertisement.Delete)
 		}
 
 		audit := protected.Group("/audit-logs")

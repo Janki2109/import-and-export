@@ -42,11 +42,35 @@ what you can help with.`
 // Ask — a single free-form Q&A turn (no server-side conversation persistence; the frontend
 // keeps the on-screen history locally and doesn't need to since this isn't a real chat
 // "conversation" row, matching "reuse infra without duplicating a conversation system").
+//
+// Tries GroqAPIKey first; if that request fails (network error, non-2xx, or the API's own
+// {"error":...} body — e.g. an expired/rate-limited key) and a second key is configured, it
+// retries once with GroqAPIKey2 before giving up. Neither key is ever returned to the caller.
 func (s *AIChatService) Ask(ctx context.Context, message string) (string, error) {
-	if s.cfg.GroqAPIKey == "" {
+	if s.cfg.GroqAPIKey == "" && s.cfg.GroqAPIKey2 == "" {
 		return "", fmt.Errorf("AI assistant is not configured (missing GROQ_API_KEY)")
 	}
 
+	keys := make([]string, 0, 2)
+	if s.cfg.GroqAPIKey != "" {
+		keys = append(keys, s.cfg.GroqAPIKey)
+	}
+	if s.cfg.GroqAPIKey2 != "" && s.cfg.GroqAPIKey2 != s.cfg.GroqAPIKey {
+		keys = append(keys, s.cfg.GroqAPIKey2)
+	}
+
+	var lastErr error
+	for _, key := range keys {
+		content, err := s.askWithKey(ctx, key, message)
+		if err == nil {
+			return content, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+func (s *AIChatService) askWithKey(ctx context.Context, apiKey, message string) (string, error) {
 	reqBody := map[string]interface{}{
 		"model": s.cfg.GroqModel,
 		"messages": []map[string]string{
@@ -65,7 +89,7 @@ func (s *AIChatService) Ask(ctx context.Context, message string) (string, error)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.cfg.GroqAPIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

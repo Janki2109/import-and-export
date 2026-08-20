@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
+
+const Color _kLogisticsAccent = Color(0xFFEA580C);
 
 /// Logistics Management — every logistics-role user with their company, fleet, and orders
 /// assigned. Backed by the new GET /admin/logistics endpoint; Approve/Suspend reuses the
@@ -83,8 +86,9 @@ class _AdminLogisticsScreenState extends State<AdminLogisticsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Logistics Management')),
-      body: RefreshIndicator(
+      appBar: AdminGradientAppBar(title: 'Logistics Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminLogisticsRow>>(
           future: _future,
@@ -104,63 +108,45 @@ class _AdminLogisticsScreenState extends State<AdminLogisticsScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: TextField(
+                  child: AdminSearchField(
+                    hint: 'Search by name or company',
                     onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      hintText: 'Search by name or company',
-                      prefixIcon: const Icon(Icons.search),
-                      filled: true,
-                      fillColor: Theme.of(context).cardTheme.color,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                    ),
                   ),
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No logistics partners found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(
+                          icon: Icons.local_shipping_outlined,
+                          title: 'No partners found',
+                          subtitle: 'No logistics partners match your search.',
+                        )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final l = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
                                 onTap: () => _showDetails(l),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                accent: _kLogisticsAccent,
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(color: AppColors.accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
-                                            child: const Icon(Icons.local_shipping_outlined, color: AppColors.accent, size: 20),
-                                          ),
+                                          const AdminIconBadge(icon: Icons.local_shipping_outlined, color: _kLogisticsAccent, size: 40),
                                           const SizedBox(width: 12),
                                           Expanded(
                                             child: Column(
                                               crossAxisAlignment: CrossAxisAlignment.start,
                                               children: [
-                                                Text(l.fullName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                                Text(l.fullName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
                                                 Text(l.companyName ?? l.email, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
                                               ],
                                             ),
                                           ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                                            decoration: BoxDecoration(color: (l.isActive ? AppColors.success : AppColors.error).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                                            child: Text(l.isActive ? 'Approved' : 'Suspended', style: TextStyle(color: l.isActive ? AppColors.success : AppColors.error, fontSize: 10.5, fontWeight: FontWeight.w700)),
-                                          ),
+                                          AdminStatusBadge(label: l.isActive ? 'Approved' : 'Suspended', color: l.isActive ? AppColors.success : AppColors.error),
                                         ],
                                       ),
                                       const SizedBox(height: 10),
@@ -202,7 +188,6 @@ class _AdminLogisticsScreenState extends State<AdminLogisticsScreen> {
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -211,6 +196,7 @@ class _AdminLogisticsScreenState extends State<AdminLogisticsScreen> {
               ],
             );
           },
+        ),
         ),
       ),
     );

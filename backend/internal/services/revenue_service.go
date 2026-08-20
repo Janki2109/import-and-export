@@ -230,7 +230,12 @@ func NewAdvertisementService(repo *repository.AdvertisementRepository) *Advertis
 type CreateAdInput struct {
 	AdvertiserID string
 	Title        string
+	Description  *string
+	Category     *string
+	MediaType    string // "image" | "video"
 	ImageURL     string
+	Price        *float64
+	ContactInfo  *string
 	TargetURL    *string
 	EndsAt       *time.Time
 }
@@ -239,10 +244,19 @@ type CreateAdInput struct {
 // config documents the intended price — wiring a Razorpay gate follows the exact same
 // pattern as MembershipService.CreatePremiumOrder/VerifyPremiumPayment above).
 func (s *AdvertisementService) Create(ctx context.Context, in CreateAdInput) (*models.Advertisement, error) {
+	mediaType := in.MediaType
+	if mediaType != "video" {
+		mediaType = "image"
+	}
 	ad := &models.Advertisement{
 		AdvertiserID: in.AdvertiserID,
 		Title:        in.Title,
+		Description:  in.Description,
+		Category:     in.Category,
+		MediaType:    mediaType,
 		ImageURL:     in.ImageURL,
+		Price:        in.Price,
+		ContactInfo:  in.ContactInfo,
 		TargetURL:    in.TargetURL,
 		EndsAt:       in.EndsAt,
 	}
@@ -258,6 +272,48 @@ func (s *AdvertisementService) ListActive(ctx context.Context) ([]models.Adverti
 
 func (s *AdvertisementService) ListMine(ctx context.Context, advertiserID string) ([]models.Advertisement, error) {
 	return s.repo.ListByAdvertiser(ctx, advertiserID)
+}
+
+// GetByID also records the view — every successful detail-page open counts as one view,
+// matching the "View count" the Advertisement Details screen shows.
+func (s *AdvertisementService) GetByID(ctx context.Context, id string) (*models.Advertisement, error) {
+	ad, err := s.repo.GetByID(ctx, id)
+	if err != nil || ad == nil {
+		return ad, err
+	}
+	_ = s.repo.IncrementViews(ctx, id) // best-effort; a view-count miss must never fail the detail fetch
+	ad.Views++
+	return ad, nil
+}
+
+type UpdateAdInput = CreateAdInput
+
+// Update — advertiser-scoped (repo enforces ownership via the WHERE clause).
+func (s *AdvertisementService) Update(ctx context.Context, id string, in UpdateAdInput) (bool, error) {
+	mediaType := in.MediaType
+	if mediaType != "video" {
+		mediaType = "image"
+	}
+	ad := &models.Advertisement{
+		Title:       in.Title,
+		Description: in.Description,
+		Category:    in.Category,
+		MediaType:   mediaType,
+		ImageURL:    in.ImageURL,
+		Price:       in.Price,
+		ContactInfo: in.ContactInfo,
+		TargetURL:   in.TargetURL,
+		EndsAt:      in.EndsAt,
+	}
+	return s.repo.Update(ctx, id, in.AdvertiserID, ad)
+}
+
+func (s *AdvertisementService) SetActive(ctx context.Context, id, advertiserID string, active bool) (bool, error) {
+	return s.repo.SetActive(ctx, id, advertiserID, active)
+}
+
+func (s *AdvertisementService) Delete(ctx context.Context, id, advertiserID string) (bool, error) {
+	return s.repo.Delete(ctx, id, advertiserID)
 }
 
 // ---------------- Audit Log (read-only, admin) ----------------

@@ -9,6 +9,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/admin.dart';
 import '../../services/admin_export.dart';
 import '../../services/admin_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _tabs = [
   (null, 'All'),
@@ -38,11 +39,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
   void initState() {
     super.initState();
     _tabController = TabController(length: _tabs.length, vsync: this);
-    _tabController.addListener(() {
-      if (!_tabController.indexIsChanging) _refresh();
-    });
-    _future = _adminService.listUsersRich();
+    // BUG FIX: previously refreshed from a controller listener guarded by
+    // `!indexIsChanging` — that guard's timing meant a tap could settle on the wrong
+    // in-flight future, so every tab ended up showing the same (first-loaded) list.
+    // TabBar's own `onTap` fires exactly once per tap, after `controller.index` has
+    // already been updated to the tapped tab, so reading `_tabController.index` here is
+    // always correct — no ambiguity, no missed/duplicate refreshes.
+    _future = _adminService.listUsersRich(role: _tabs[_tabController.index].$1);
   }
+
+  void _onTabTapped(int index) => _refresh();
 
   @override
   void dispose() {
@@ -114,6 +120,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
                 ),
               ]),
               const SizedBox(height: 16),
+              _row('User ID', _displayId(u)),
               _row('Company', u.companyName ?? '—'),
               _row('Email', u.email),
               _row('Phone', u.phone),
@@ -128,6 +135,20 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
         ),
       ),
     );
+  }
+
+  // Real user ID (the actual backend UUID), presented with a readable role prefix — the
+  // prefix is derived from the user's real `role` field, not a separate invented ID scheme.
+  String _displayId(AdminUserRow u) {
+    final prefix = switch (u.role) {
+      'importer' => 'IMP',
+      'exporter' => 'EXP',
+      'logistics' => 'LOG',
+      'admin' => 'ADM',
+      _ => u.role.toUpperCase(),
+    };
+    final short = u.id.length > 8 ? u.id.substring(0, 8).toUpperCase() : u.id.toUpperCase();
+    return '$prefix-$short';
   }
 
   Widget _row(String label, String value) {
@@ -182,11 +203,35 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('User Management'),
-        bottom: TabBar(controller: _tabController, isScrollable: true, tabs: _tabs.map((t) => Tab(text: t.$2)).toList()),
+      appBar: AdminGradientAppBar(
+        title: 'User Management',
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: TabBar(
+              controller: _tabController,
+              onTap: _onTabTapped,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              // Explicit white/translucent-white styling — without this, TabBar falls back
+              // to the theme's primary (blue) label color, which is invisible against this
+              // same blue gradient AppBar background (the bug being fixed here).
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white70,
+              labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              indicator: BoxDecoration(color: Colors.white.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(20)),
+              indicatorSize: TabBarIndicatorSize.tab,
+              dividerColor: Colors.transparent,
+              splashBorderRadius: BorderRadius.circular(20),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              tabs: _tabs.map((t) => Tab(height: 38, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Text(t.$2, maxLines: 1, overflow: TextOverflow.visible)))).toList(),
+            ),
+          ),
+        ),
       ),
-      body: RefreshIndicator(
+      body: AdminPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<AdminUserRow>>(
           future: _future,
@@ -212,15 +257,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
                   child: Row(
                     children: [
                       Expanded(
-                        child: TextField(
+                        child: AdminSearchField(
+                          hint: 'Search by name, email, or company',
                           onChanged: (v) => setState(() => _query = v),
-                          decoration: InputDecoration(
-                            hintText: 'Search by name, email, or company',
-                            prefixIcon: const Icon(Icons.search),
-                            filled: true,
-                            fillColor: Theme.of(context).cardTheme.color,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -238,45 +277,35 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? const Center(child: Text('No users found.', style: TextStyle(color: AppColors.textSecondary)))
+                      ? const AdminEmptyState(icon: Icons.people_outline, title: 'No users found.', subtitle: 'Try a different search or role tab.')
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                           itemCount: filtered.length,
                           itemBuilder: (context, i) {
                             final u = filtered[i];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).cardTheme.color,
-                                borderRadius: BorderRadius.circular(18),
-                                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                              ),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(18),
+                            return AdminReveal(
+                              index: i,
+                              child: AdminCard(
+                                accent: const Color(0xFF7C3AED),
                                 onTap: () => _showDetails(u),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14),
-                                  child: Column(
+                                child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
-                                          CircleAvatar(radius: 20, backgroundColor: AppColors.primary.withValues(alpha: 0.12), child: Text(u.fullName.isNotEmpty ? u.fullName[0].toUpperCase() : '?', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800))),
+                                          AdminIconBadge(icon: Icons.person, color: const Color(0xFF7C3AED), size: 40),
                                           const SizedBox(width: 12),
                                           Expanded(
                                             child: Column(
                                               crossAxisAlignment: CrossAxisAlignment.start,
                                               children: [
-                                                Text(u.fullName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                                Text(u.fullName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                Text(_displayId(u), style: const TextStyle(color: AppColors.primary, fontSize: 10.5, fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
                                                 Text(u.companyName ?? u.email, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
                                               ],
                                             ),
                                           ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                                            decoration: BoxDecoration(color: (u.isActive ? AppColors.success : AppColors.error).withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                                            child: Text(u.isActive ? 'Active' : 'Suspended', style: TextStyle(color: u.isActive ? AppColors.success : AppColors.error, fontSize: 10.5, fontWeight: FontWeight.w700)),
-                                          ),
+                                          AdminStatusBadge(label: u.isActive ? 'Active' : 'Suspended', color: u.isActive ? AppColors.success : AppColors.error),
                                         ],
                                       ),
                                       const SizedBox(height: 10),
@@ -323,7 +352,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
                                       ),
                                     ],
                                   ),
-                                ),
                               ),
                             );
                           },
@@ -333,7 +361,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> with SingleTickerPr
             );
           },
         ),
-      ),
+      )),
     );
   }
 

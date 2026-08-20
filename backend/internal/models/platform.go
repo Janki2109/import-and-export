@@ -63,15 +63,23 @@ type Membership struct {
 }
 
 type Advertisement struct {
-	ID           string     `json:"id" db:"id"`
-	AdvertiserID string     `json:"advertiser_id" db:"advertiser_id"`
-	Title        string     `json:"title" db:"title"`
-	ImageURL     string     `json:"image_url" db:"image_url"`
-	TargetURL    *string    `json:"target_url,omitempty" db:"target_url"`
-	IsActive     bool       `json:"is_active" db:"is_active"`
-	StartsAt     time.Time  `json:"starts_at" db:"starts_at"`
-	EndsAt       *time.Time `json:"ends_at,omitempty" db:"ends_at"`
-	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
+	ID              string     `json:"id" db:"id"`
+	AdvertiserID    string     `json:"advertiser_id" db:"advertiser_id"`
+	AdvertiserName  *string    `json:"advertiser_name,omitempty" db:"advertiser_name"`   // joined from users.full_name — read-only, never written
+	AdvertiserRole  *string    `json:"advertiser_role,omitempty" db:"advertiser_role"`   // joined from users.role
+	Title           string     `json:"title" db:"title"`
+	Description     *string    `json:"description,omitempty" db:"description"`
+	Category        *string    `json:"category,omitempty" db:"category"`
+	MediaType       string     `json:"media_type" db:"media_type"` // "image" | "video"
+	ImageURL        string     `json:"image_url" db:"image_url"`   // holds the video URL too when media_type="video" — one media slot per ad
+	Price           *float64   `json:"price,omitempty" db:"price"`
+	ContactInfo     *string    `json:"contact_info,omitempty" db:"contact_info"`
+	Views           int        `json:"views" db:"views"`
+	TargetURL       *string    `json:"target_url,omitempty" db:"target_url"`
+	IsActive        bool       `json:"is_active" db:"is_active"`
+	StartsAt        time.Time  `json:"starts_at" db:"starts_at"`
+	EndsAt          *time.Time `json:"ends_at,omitempty" db:"ends_at"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
 }
 
 // PlatformSettings — singleton row (id=1) editable from the Admin Settings screen.

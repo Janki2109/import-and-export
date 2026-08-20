@@ -72,7 +72,8 @@ class ChatSocket {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   bool _connected = false;
-  final _storage = const FlutterSecureStorage();
+  // See ApiClient's _storage field doc for why resetOnError is needed on Android.
+  final _storage = const FlutterSecureStorage(aOptions: AndroidOptions(resetOnError: true));
   final _incoming = StreamController<ChatMessage>.broadcast();
   // Journey 8 — typing indicator / online status: (conversationId, userId) for typing,
   // (userId, online) for presence. Kept as raw maps rather than new model classes since

@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,11 +9,16 @@ import 'core/constants/app_constants.dart';
 import 'features/onboarding/services/app_guide_prefs.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'providers/providers.dart';
+import 'services/push_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     await Firebase.initializeApp();
+    // Must be registered before runApp — this is the entry point FCM uses to wake the app's
+    // isolate when a data message arrives while the app is fully terminated.
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    await PushNotificationService().initLocalNotifications();
   } catch (e) {
     // Push notifications degrade gracefully — the app still works without Firebase
     // configured (e.g. google-services.json missing in a dev build).

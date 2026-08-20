@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/network/api_client.dart';
 import '../../models/order.dart';
 import '../../models/trade.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/providers.dart';
 import '../../services/company_service.dart';
 import '../../services/kyc_service.dart';
@@ -26,6 +27,7 @@ import '../shared/notifications_screen.dart';
 import '../shared/order_details_screen.dart';
 import '../shared/order_documents_screen.dart';
 import '../wallet/wallet_screen.dart';
+import '../../widgets/premium_background.dart';
 import '../../widgets/theme_toggle_button.dart';
 import 'browse_catalog_screen.dart';
 import 'browse_exporters_screen.dart';
@@ -222,10 +224,18 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final headerColors = isDark ? [AppColorsDark.primary, AppColorsDark.secondary] : [const Color(0xFF0B3D91), const Color(0xFF1857C4)];
     return DoubleBackToExit(child: Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Importer Dashboard'),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(gradient: LinearGradient(colors: headerColors, begin: Alignment.topLeft, end: Alignment.bottomRight)),
+        ),
         actions: [
           const ThemeToggleButton(),
           FutureBuilder<_DashboardBundle>(
@@ -258,23 +268,18 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
               );
             },
           ),
-          _ProfileMenuButton(name: auth.currentUser?.fullName ?? 'Importer'),
+          FutureBuilder<_DashboardBundle>(
+            future: _future,
+            builder: (context, snapshot) => _ProfileMenuButton(
+              name: auth.currentUser?.fullName ?? 'Importer',
+              email: auth.currentUser?.email ?? '',
+              verified: snapshot.data?.kycVerified ?? false,
+            ),
+          ),
           const SizedBox(width: 4),
         ],
       ),
-      floatingActionButton: _GradientFab(
-        onPressed: () async {
-          final result = await Navigator.of(context).push<Map<String, dynamic>>(
-            MaterialPageRoute(builder: (_) => const CreateOrderScreen()),
-          );
-          if (result != null) {
-            _startUpiPayment(result['order']['id'], result['upi_link'], (result['amount'] as num).toDouble());
-          }
-        },
-        icon: Icons.add,
-        label: 'New Order',
-      ),
-      body: RefreshIndicator(
+      body: PremiumPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<_DashboardBundle>(
           future: _future,
@@ -296,18 +301,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
                     verified: b?.kycVerified ?? false,
                     completionPercent: b?.completionPercent ?? 0,
                     onCompleteProfile: () => _push(const KYCScreen()),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _StatsGrid(
-                    orders: orders,
-                    myRfqs: b?.myRfqs ?? [],
-                    quotationsReceived: b?.quotationsReceived ?? 0,
-                    walletBalance: b?.wallet?.balance ?? 0,
-                    onOpenRfqs: () => _push(const MyRFQsScreen()),
-                    onQuotations: () => _push(const MyRFQsScreen()),
-                    onOrders: () => _scrollToOrders(),
-                    onWallet: () => _push(const WalletScreen()),
+                    onViewProfile: () => _push(const ProfileScreen()),
                   ),
                 ),
                 if (b != null && b.notifications.isNotEmpty)
@@ -337,11 +331,18 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
                   SliverToBoxAdapter(
                     child: _RecentActivity(myRfqs: b.myRfqs, orders: orders),
                   ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  sliver: SliverToBoxAdapter(
-                    key: _ordersKey,
-                    child: _SectionHeader(icon: Icons.inventory_2_outlined, title: 'Your Orders'),
+                SliverToBoxAdapter(
+                  key: _ordersKey,
+                  child: _OrdersSummaryCard(
+                    orders: orders,
+                    onNewOrder: () async {
+                      final result = await Navigator.of(context).push<Map<String, dynamic>>(
+                        MaterialPageRoute(builder: (_) => const CreateOrderScreen()),
+                      );
+                      if (result != null) {
+                        _startUpiPayment(result['order']['id'], result['upi_link'], (result['amount'] as num).toDouble());
+                      }
+                    },
                   ),
                 ),
                 if (orders.isEmpty)
@@ -351,7 +352,7 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
                   )
                 else
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 110),
                     sliver: SliverList.builder(
                       itemCount: orders.length,
                       itemBuilder: (context, i) {
@@ -389,6 +390,34 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
             );
           },
         ),
+      )),
+      bottomNavigationBar: _PremiumBottomNav(
+        activeIndex: 0,
+        items: const [
+          (Icons.dashboard_outlined, Icons.dashboard, 'Dashboard'),
+          (Icons.request_quote_outlined, Icons.request_quote, 'RFQs'),
+          (Icons.inventory_2_outlined, Icons.inventory_2, 'Orders'),
+          (Icons.local_shipping_outlined, Icons.local_shipping, 'Shipments'),
+          (Icons.receipt_long_outlined, Icons.receipt_long, 'Transactions'),
+          (Icons.person_outline, Icons.person, 'Profile'),
+        ],
+        onTap: (i) {
+          switch (i) {
+            case 1:
+              _push(const MyRFQsScreen());
+              break;
+            case 2:
+            case 3:
+              _scrollToOrders();
+              break;
+            case 4:
+              _push(const WalletScreen());
+              break;
+            case 5:
+              _push(const ProfileScreen());
+              break;
+          }
+        },
       ),
     ));
   }
@@ -401,58 +430,21 @@ class _ImporterDashboardState extends ConsumerState<ImporterDashboard> {
   }
 }
 
-/// Top-right avatar -> profile/company/documents/settings/logout menu — same pattern as
-/// the Exporter Dashboard's profile menu, importer-relevant destinations.
+/// Top-right avatar -> profile/company/documents/settings/logout menu — same destinations,
+/// same routes, same logout call as before; only presentation changed to a premium
+/// slide-in panel (see [_ProfileMenuPanel]) instead of a plain PopupMenuButton.
 class _ProfileMenuButton extends ConsumerWidget {
   final String name;
-  const _ProfileMenuButton({required this.name});
+  final String email;
+  final bool verified;
+  const _ProfileMenuButton({required this.name, required this.email, required this.verified});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.read(authProvider);
-    return PopupMenuButton<String>(
-      tooltip: 'Profile',
-      offset: const Offset(0, 44),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      onSelected: (value) {
-        switch (value) {
-          case 'profile':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileScreen()));
-            break;
-          case 'documents':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const KYCScreen()));
-            break;
-          case 'catalog':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseCatalogScreen()));
-            break;
-          case 'suppliers':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseExportersScreen()));
-            break;
-          case 'membership':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MembershipScreen()));
-            break;
-          case 'ads':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdsScreen()));
-            break;
-          case 'disputes':
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DisputesScreen()));
-            break;
-          case 'logout':
-            auth.logout();
-            break;
-        }
-      },
-      itemBuilder: (context) => [
-        const PopupMenuItem(value: 'profile', child: ListTile(leading: Icon(Icons.person_outline), title: Text('Profile'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'documents', child: ListTile(leading: Icon(Icons.description_outlined), title: Text('Documents / KYC'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'catalog', child: ListTile(leading: Icon(Icons.storefront_outlined), title: Text('Browse Catalog'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'suppliers', child: ListTile(leading: Icon(Icons.business_outlined), title: Text('Find Suppliers'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'membership', child: ListTile(leading: Icon(Icons.workspace_premium_outlined), title: Text('Membership'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'ads', child: ListTile(leading: Icon(Icons.campaign_outlined), title: Text('Advertisements'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuItem(value: 'disputes', child: ListTile(leading: Icon(Icons.gavel_outlined), title: Text('My Disputes'), contentPadding: EdgeInsets.zero)),
-        const PopupMenuDivider(),
-        const PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout, color: AppColors.error), title: Text('Logout', style: TextStyle(color: AppColors.error)), contentPadding: EdgeInsets.zero)),
-      ],
+    return InkWell(
+      onTap: () => _openProfileMenu(context, auth, name: name, email: email, verified: verified),
+      customBorder: const CircleBorder(),
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Container(
@@ -462,6 +454,213 @@ class _ProfileMenuButton extends ConsumerWidget {
             radius: 15,
             backgroundColor: Colors.white.withValues(alpha: 0.2),
             child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _openProfileMenu(BuildContext context, AuthProvider auth, {required String name, required String email, required bool verified}) {
+  // Anchored near the top-right avatar button — a side panel, not a full-width bar.
+  final topInset = MediaQuery.of(context).padding.top + kToolbarHeight;
+  showGeneralDialog(
+    context: context,
+    barrierLabel: 'Profile menu',
+    barrierDismissible: true,
+    barrierColor: Colors.black.withValues(alpha: 0.32),
+    transitionDuration: const Duration(milliseconds: 260),
+    pageBuilder: (context, animation, secondaryAnimation) {
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+      return Stack(
+        children: [
+          Positioned(
+            top: topInset + 6,
+            right: 12,
+            child: FadeTransition(
+              opacity: curved,
+              child: ScaleTransition(
+                alignment: Alignment.topRight,
+                scale: Tween<double>(begin: 0.85, end: 1).animate(curved),
+                child: _ProfileMenuPanel(name: name, email: email, verified: verified, auth: auth),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) => child,
+  );
+}
+
+/// Premium profile drawer — gradient header (avatar, name, email, verification badge) plus
+/// a scrollable list of the exact same menu items/routes/actions the old PopupMenuButton
+/// exposed. Slides in from the top-right, dims the dashboard behind it, dismisses on
+/// outside tap or after any item is selected.
+class _ProfileMenuPanel extends StatelessWidget {
+  final String name;
+  final String email;
+  final bool verified;
+  final AuthProvider auth;
+  const _ProfileMenuPanel({required this.name, required this.email, required this.verified, required this.auth});
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      (Icons.person_outline, 'Profile', 'View and edit your profile', const Color(0xFF2563EB), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileScreen()))),
+      (Icons.description_outlined, 'Documents / KYC', 'Manage your documents', const Color(0xFFDB2777), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const KYCScreen()))),
+      (Icons.storefront_outlined, 'Browse Catalog', 'Explore products & services', const Color(0xFFEA580C), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseCatalogScreen()))),
+      (Icons.business_outlined, 'Find Suppliers', 'Discover verified suppliers', const Color(0xFF7C3AED), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BrowseExportersScreen()))),
+      (Icons.workspace_premium_outlined, 'Membership', 'Manage your membership', const Color(0xFF0D9488), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MembershipScreen()))),
+      (Icons.campaign_outlined, 'Advertisements', 'Manage your ads', const Color(0xFF2563EB), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdsScreen()))),
+      (Icons.gavel_outlined, 'My Disputes', 'View and track disputes', const Color(0xFFCA8A04), () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DisputesScreen()))),
+    ];
+
+    // Side panel anchored near the top-right avatar button — not full device width.
+    final maxHeight = MediaQuery.of(context).size.height * 0.82;
+    final width = MediaQuery.of(context).size.width * 0.78;
+    return Material(
+      color: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: width),
+        child: Container(
+          width: width,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardTheme.color,
+            borderRadius: BorderRadius.circular(26),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.28), blurRadius: 26, offset: const Offset(0, 10))],
+          ),
+          child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
+                        child: Column(
+                          children: [
+                            for (int i = 0; i < items.length; i++)
+                              _Reveal(
+                                index: i,
+                                base: const Duration(milliseconds: 160),
+                                child: _ProfileMenuTile(
+                                  icon: items[i].$1,
+                                  title: items[i].$2,
+                                  subtitle: items[i].$3,
+                                  color: items[i].$4,
+                                  onTap: () {
+                                    Navigator.of(context).pop();
+                                    items[i].$5();
+                                  },
+                                ),
+                              ),
+                            const SizedBox(height: 6),
+                            _ProfileMenuTile(
+                              icon: Icons.logout,
+                              title: 'Logout',
+                              subtitle: 'Securely sign out',
+                              color: AppColors.error,
+                              danger: true,
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                auth.logout();
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            _TapScale(
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MembershipScreen()));
+                              },
+                              borderRadius: BorderRadius.circular(18),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(colors: [const Color(0xFF7C3AED).withValues(alpha: 0.1), const Color(0xFF2563EB).withValues(alpha: 0.08)]),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(color: const Color(0xFF7C3AED).withValues(alpha: 0.18)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.workspace_premium, color: Color(0xFF7C3AED), size: 26),
+                                    const SizedBox(width: 12),
+                                    const Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Go Premium', style: TextStyle(color: Color(0xFF7C3AED), fontWeight: FontWeight.w800, fontSize: 14)),
+                                          SizedBox(height: 2),
+                                          Text('Unlock more features and grow your business', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                                      child: const Icon(Icons.arrow_forward, size: 15, color: Color(0xFF7C3AED)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+  }
+}
+
+class _ProfileMenuTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+  final bool danger;
+  const _ProfileMenuTile({required this.icon, required this.title, required this.subtitle, required this.color, required this.onTap, this.danger = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: _TapScale(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: danger ? AppColors.error.withValues(alpha: 0.06) : Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: BorderRadius.circular(16),
+            border: danger ? Border.all(color: AppColors.error.withValues(alpha: 0.15)) : null,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, size: 19, color: color),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: danger ? AppColors.error : null), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 1),
+                    Text(subtitle, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, size: 18, color: danger ? AppColors.error.withValues(alpha: 0.6) : AppColors.textSecondary.withValues(alpha: 0.5)),
+            ],
           ),
         ),
       ),
@@ -495,16 +694,22 @@ class _TapScaleState extends State<_TapScale> {
       onTapUp: widget.onTap == null ? null : (_) => setState(() => _pressed = false),
       onTapCancel: widget.onTap == null ? null : () => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
+        scale: _pressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 110),
         curve: Curves.easeOut,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: widget.borderRadius,
-          child: InkWell(
-            onTap: widget.onTap,
+        child: AnimatedOpacity(
+          opacity: _pressed ? 0.85 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          child: Material(
+            color: Colors.transparent,
             borderRadius: widget.borderRadius,
-            child: widget.child,
+            child: InkWell(
+              onTap: widget.onTap,
+              borderRadius: widget.borderRadius,
+              splashColor: AppColors.primary.withValues(alpha: 0.15),
+              highlightColor: AppColors.primary.withValues(alpha: 0.08),
+              child: widget.child,
+            ),
           ),
         ),
       ),
@@ -535,6 +740,66 @@ class _Reveal extends StatelessWidget {
   }
 }
 
+/// Premium bottom navigation — visual only. It does NOT introduce new routes: "Dashboard" is
+/// always the active tab (this bar only ever renders on the dashboard screen itself), and
+/// every other item just triggers the exact same push/scroll callback the equivalent Quick
+/// Action already uses — a shortcut, not a new navigation destination.
+class _PremiumBottomNav extends StatelessWidget {
+  final int activeIndex;
+  final List<(IconData, IconData, String)> items;
+  final void Function(int index) onTap;
+  const _PremiumBottomNav({required this.activeIndex, required this.items, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08), blurRadius: 16, offset: const Offset(0, -4))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            for (int i = 0; i < items.length; i++)
+              Expanded(
+                child: _TapScale(
+                  onTap: i == activeIndex ? null : () => onTap(i),
+                  borderRadius: BorderRadius.circular(14),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    decoration: BoxDecoration(
+                      color: i == activeIndex ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(i == activeIndex ? items[i].$2 : items[i].$1, size: 20, color: i == activeIndex ? AppColors.primary : AppColors.textSecondary),
+                        const SizedBox(height: 3),
+                        Text(
+                          items[i].$3,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 9, fontWeight: i == activeIndex ? FontWeight.w700 : FontWeight.w500, color: i == activeIndex ? AppColors.primary : AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Section title with a small colored icon badge — used above every content block for a
 /// consistent, premium visual hierarchy.
 class _SectionHeader extends StatelessWidget {
@@ -557,6 +822,45 @@ class _SectionHeader extends StatelessWidget {
           child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.2)),
         ),
       ],
+    );
+  }
+}
+
+/// A vivid, gradient-filled action button with press micro-interaction — used for the
+/// dashboard's primary actions (payment sheet, order-card buttons) instead of flat
+/// Material buttons, for a more colorful, tactile feel.
+class _GradientActionButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  final IconData icon;
+  final String label;
+  final List<Color> colors;
+  final bool outlined;
+  const _GradientActionButton({required this.onTap, required this.icon, required this.label, required this.colors, this.outlined = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return _TapScale(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 46,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          gradient: outlined ? null : LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
+          color: outlined ? colors.first.withValues(alpha: 0.08) : null,
+          border: outlined ? Border.all(color: colors.first.withValues(alpha: 0.4), width: 1.4) : null,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: outlined ? null : [BoxShadow(color: colors.first.withValues(alpha: 0.35), blurRadius: 14, offset: const Offset(0, 6))],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: outlined ? colors.first : Colors.white),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: outlined ? colors.first : Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -643,6 +947,7 @@ class _WelcomeCard extends StatelessWidget {
   final bool verified;
   final int completionPercent;
   final VoidCallback onCompleteProfile;
+  final VoidCallback onViewProfile;
   const _WelcomeCard({
     required this.name,
     this.avatarUrl,
@@ -652,6 +957,7 @@ class _WelcomeCard extends StatelessWidget {
     required this.verified,
     required this.completionPercent,
     required this.onCompleteProfile,
+    required this.onViewProfile,
   });
 
   @override
@@ -680,7 +986,10 @@ class _WelcomeCard extends StatelessWidget {
         child: Stack(
           children: [
             const _HeroBackdrop(),
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
@@ -792,6 +1101,29 @@ class _WelcomeCard extends StatelessWidget {
                   ),
                 ),
               ],
+                ),
+                const SizedBox(height: 14),
+                _TapScale(
+                  onTap: onViewProfile,
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('View Profile', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                        SizedBox(width: 6),
+                        Icon(Icons.arrow_forward, color: Colors.white, size: 15),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -800,128 +1132,92 @@ class _WelcomeCard extends StatelessWidget {
   }
 }
 
-/// 8-card, 2-column statistics grid — all figures derived from real, already-fetched data
-/// (orders list + RFQ list + wallet summary). No fabricated numbers.
-class _StatsGrid extends StatelessWidget {
+/// Dark "Your Orders" summary card — a real, honest breakdown of the same `orders` list
+/// already fetched for the list below (Pending = just created, Confirmed = accepted/escrow
+/// held, Shipped = shipped/in transit, Completed = payment released), with the existing
+/// "New Order" action embedded as a floating pill instead of a separate Scaffold FAB.
+class _OrdersSummaryCard extends StatelessWidget {
   final List<dynamic> orders;
-  final List<RFQ> myRfqs;
-  final int quotationsReceived;
-  final double walletBalance;
-  final VoidCallback onOpenRfqs;
-  final VoidCallback onQuotations;
-  final VoidCallback onOrders;
-  final VoidCallback onWallet;
-  const _StatsGrid({
-    required this.orders,
-    required this.myRfqs,
-    required this.quotationsReceived,
-    required this.walletBalance,
-    required this.onOpenRfqs,
-    required this.onQuotations,
-    required this.onOrders,
-    required this.onWallet,
-  });
+  final VoidCallback onNewOrder;
+  const _OrdersSummaryCard({required this.orders, required this.onNewOrder});
 
   @override
   Widget build(BuildContext context) {
-    final activeRfqs = myRfqs.where((r) => r.status == 'open' || r.status == 'quoted').length;
-    final activeShipments = orders.where((o) => ['accepted', 'shipped', 'in_transit'].contains(o['status'])).length;
-    final escrowAmount = orders
-        .where((o) => o['status'] == 'payment_held')
-        .fold<double>(0, (sum, o) => sum + (double.tryParse('${o['total_amount']}') ?? 0));
-    final completedOrders = orders.where((o) => o['status'] == 'payment_released').length;
-
+    final pending = orders.where((o) => o['status'] == 'created').length;
+    final confirmed = orders.where((o) => ['accepted', 'payment_held'].contains(o['status'])).length;
+    final shipped = orders.where((o) => ['shipped', 'in_transit'].contains(o['status'])).length;
+    final completed = orders.where((o) => ['payment_released', 'delivered'].contains(o['status'])).length;
     final items = [
-      ('Active RFQs', activeRfqs.toDouble(), '$activeRfqs', Icons.request_quote_outlined, AppColors.primary, onOpenRfqs),
-      ('Quotations Received', quotationsReceived.toDouble(), '$quotationsReceived', Icons.description_outlined, Colors.purple, onQuotations),
-      ('Orders', orders.length.toDouble(), '${orders.length}', Icons.inventory_2_outlined, AppColors.accent, onOrders),
-      ('Active Shipments', activeShipments.toDouble(), '$activeShipments', Icons.local_shipping_outlined, AppColors.heldBlue, onOrders),
-      ('Wallet Balance', walletBalance, '₹${walletBalance.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.success, onWallet),
-      ('Escrow Payments', escrowAmount, '₹${escrowAmount.toStringAsFixed(0)}', Icons.lock_clock_outlined, AppColors.warning, onOrders),
-      ('Completed Orders', completedOrders.toDouble(), '$completedOrders', Icons.task_alt_outlined, AppColors.success, onOrders),
-      ('Total RFQs', myRfqs.length.toDouble(), '${myRfqs.length}', Icons.receipt_long_outlined, Colors.purple, onOpenRfqs),
+      (Icons.hourglass_top_outlined, '$pending', 'Pending', const Color(0xFF60A5FA)),
+      (Icons.check_circle_outline, '$confirmed', 'Confirmed', const Color(0xFF4ADE80)),
+      (Icons.local_shipping_outlined, '$shipped', 'Shipped', const Color(0xFFFB923C)),
+      (Icons.task_alt_outlined, '$completed', 'Completed', const Color(0xFFC084FC)),
     ];
-
-    const crossAxisCount = 2;
-    const spacing = 10.0;
-    const targetCardHeight = 128.0;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cellWidth = (constraints.maxWidth - spacing * (crossAxisCount - 1)) / crossAxisCount;
-          final aspectRatio = cellWidth / targetCardHeight;
-          return GridView.count(
-            crossAxisCount: crossAxisCount,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: spacing,
-            crossAxisSpacing: spacing,
-            childAspectRatio: aspectRatio,
+      child: _Reveal(
+        index: 0,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 22),
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              for (int i = 0; i < items.length; i++)
-                _Reveal(
-                  index: i,
-                  child: _StatCard(label: items[i].$1, value: items[i].$3, icon: items[i].$4, color: items[i].$5, onTap: items[i].$6),
+              Container(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF0B1E45), Color(0xFF14306E)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [BoxShadow(color: const Color(0xFF0B1E45).withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 10))],
                 ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return _TapScale(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withValues(alpha: 0.10)),
-          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.10), blurRadius: 14, offset: const Offset(0, 6))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.max,
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(11),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                          child: const Icon(Icons.inventory_2_outlined, size: 16, color: Colors.white),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text('Your Orders', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5)),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        for (final it in items) ...[
+                          Expanded(
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(color: it.$4.withValues(alpha: 0.18), shape: BoxShape.circle),
+                                  child: Icon(it.$1, size: 16, color: it.$4),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(it.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                                const SizedBox(height: 2),
+                                Text(it.$3, style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 10.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                  ],
+                ),
               ),
-              child: Icon(icon, size: 17, color: color),
-            ),
-            const SizedBox(height: 8),
-            // FittedBox scales the value down instead of overflowing/clipping for large
-            // figures (e.g. big wallet/escrow amounts) — never shrinks below its natural
-            // size for normal short values.
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, letterSpacing: -0.3), maxLines: 1),
-            ),
-            const SizedBox(height: 4),
-            // Expanded + maxLines:2 lets the label wrap to a second line and absorbs any
-            // remaining card height, so it can never push the card past its fixed height.
-            Expanded(
-              child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5, fontWeight: FontWeight.w500), maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-          ],
+              Positioned(
+                right: 8,
+                bottom: -18,
+                child: _GradientFab(onPressed: onNewOrder, icon: Icons.add, label: 'New Order'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1020,15 +1316,15 @@ class _QuickActionsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      (Icons.add_box_outlined, 'Create RFQ', onCreateRfq, AppColors.primary),
-      (Icons.request_quote_outlined, 'My RFQs', onMyRfqs, AppColors.secondary),
-      (Icons.description_outlined, 'Quotations', onQuotations, Colors.purple),
-      (Icons.inventory_2_outlined, 'Orders', onOrders, AppColors.accent),
-      (Icons.local_shipping_outlined, 'Shipments', onShipments, AppColors.heldBlue),
-      (Icons.account_balance_wallet_outlined, 'Wallet', onWallet, AppColors.success),
-      (Icons.chat_bubble_outline, 'Messages', onMessages, AppColors.warning),
-      (Icons.travel_explore_outlined, 'Trade Tools', onTradeTools, AppColors.primary),
-      if (onNegotiations != null) (Icons.handshake_outlined, 'Negotiations', onNegotiations!, AppColors.secondary),
+      (Icons.add_box_outlined, 'Create RFQ', onCreateRfq, const Color(0xFF2563EB)),
+      (Icons.request_quote_outlined, 'My RFQs', onMyRfqs, const Color(0xFF7C3AED)),
+      (Icons.description_outlined, 'Quotations', onQuotations, const Color(0xFFDB2777)),
+      (Icons.inventory_2_outlined, 'Orders', onOrders, const Color(0xFFEA580C)),
+      (Icons.local_shipping_outlined, 'Shipments', onShipments, const Color(0xFF0EA5E9)),
+      (Icons.receipt_long_outlined, 'Transaction History', onWallet, const Color(0xFF16A34A)),
+      (Icons.chat_bubble_outline, 'Messages', onMessages, const Color(0xFFCA8A04)),
+      (Icons.travel_explore_outlined, 'Trade Tools', onTradeTools, const Color(0xFF0D9488)),
+      if (onNegotiations != null) (Icons.handshake_outlined, 'Negotiations', onNegotiations!, const Color(0xFF9333EA)),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -1072,25 +1368,30 @@ class _QuickActionTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Theme.of(context).cardTheme.color,
           borderRadius: BorderRadius.circular(18),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
+          border: Border.all(color: color.withValues(alpha: 0.14)),
+          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.16), blurRadius: 12, offset: const Offset(0, 5))],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.65)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                borderRadius: BorderRadius.circular(13),
+                boxShadow: [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 3))],
               ),
-              child: Icon(icon, color: color, size: 19),
+              child: Icon(icon, color: Colors.white, size: 20),
             ),
             const SizedBox(height: 8),
             Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Container(height: 3, width: 22, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
           ],
         ),
       ),
@@ -1387,16 +1688,19 @@ class _PaymentSheet extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: onLaunchUpi,
-              icon: const Icon(Icons.account_balance_wallet_outlined),
-              label: const Text('Pay via UPI App'),
+            _GradientActionButton(
+              onTap: onLaunchUpi,
+              icon: Icons.account_balance_wallet_outlined,
+              label: 'Pay via UPI App',
+              colors: const [Color(0xFF16A34A), Color(0xFF15803D)],
             ),
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: onPaymentDone,
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Text('Payment Done'),
+            _GradientActionButton(
+              onTap: onPaymentDone,
+              icon: Icons.check_circle_outline,
+              label: 'Payment Done',
+              colors: const [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+              outlined: true,
             ),
           ],
         ),

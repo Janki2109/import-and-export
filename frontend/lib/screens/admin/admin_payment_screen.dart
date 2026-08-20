@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/payment_terms.dart';
 import '../../services/payment_terms_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _paymentModelFilters = [null, 'advance_100', 'advance_balance', 'milestone_escrow', 'letter_of_credit', 'open_account', 'custom'];
 const _paymentModelLabels = {
@@ -48,8 +49,9 @@ class _AdminPaymentScreenState extends State<AdminPaymentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Payment Management')),
-      body: RefreshIndicator(
+      appBar: const AdminGradientAppBar(title: 'Payment Management'),
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -66,25 +68,19 @@ class _AdminPaymentScreenState extends State<AdminPaymentScreen> {
                   crossAxisSpacing: 10,
                   childAspectRatio: 1.8,
                   children: [
-                    _summaryCard('Total in Escrow', s == null ? '—' : '₹${s.totalEscrow.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.primary),
-                    _summaryCard('Pending Releases', '${s?.pendingReleases ?? '—'}', Icons.hourglass_top_outlined, AppColors.warning),
-                    _summaryCard('Released', s == null ? '—' : '₹${s.released.toStringAsFixed(0)}', Icons.verified_outlined, AppColors.success),
-                    _summaryCard('Upcoming Milestones', '${s?.upcomingMilestones ?? '—'}', Icons.schedule_outlined, AppColors.heldBlue),
-                    _summaryCard('Delayed / On Hold', '${s?.delayedMilestones ?? '—'}', Icons.block, AppColors.error),
+                    AdminReveal(index: 0, child: _summaryCard('Total in Escrow', s == null ? '—' : '₹${s.totalEscrow.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.primary)),
+                    AdminReveal(index: 1, child: _summaryCard('Pending Releases', '${s?.pendingReleases ?? '—'}', Icons.hourglass_top_outlined, AppColors.warning)),
+                    AdminReveal(index: 2, child: _summaryCard('Released', s == null ? '—' : '₹${s.released.toStringAsFixed(0)}', Icons.verified_outlined, AppColors.success)),
+                    AdminReveal(index: 3, child: _summaryCard('Upcoming Milestones', '${s?.upcomingMilestones ?? '—'}', Icons.schedule_outlined, AppColors.heldBlue)),
+                    AdminReveal(index: 4, child: _summaryCard('Delayed / On Hold', '${s?.delayedMilestones ?? '—'}', Icons.block, AppColors.error)),
                   ],
                 );
               },
             ),
             const SizedBox(height: 16),
-            TextField(
+            AdminSearchField(
+              hint: 'Search by order #, product, importer, exporter',
               onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                hintText: 'Search by order #, product, importer, exporter',
-                prefixIcon: const Icon(Icons.search),
-                filled: true,
-                fillColor: Theme.of(context).cardTheme.color,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-              ),
             ),
             const SizedBox(height: 10),
             SizedBox(
@@ -129,50 +125,38 @@ class _AdminPaymentScreenState extends State<AdminPaymentScreen> {
                       r.exporterName.toLowerCase().contains(q)).toList();
                 }
                 if (rows.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        children: [
-                          Icon(Icons.account_balance_wallet_outlined, size: 44, color: AppColors.textSecondary.withValues(alpha: 0.4)),
-                          const SizedBox(height: 12),
-                          const Text('No payment schedules found.', style: TextStyle(color: AppColors.textSecondary)),
-                        ],
-                      ),
-                    ),
+                  return const AdminEmptyState(
+                    icon: Icons.account_balance_wallet_outlined,
+                    title: 'No payment schedules found',
+                    subtitle: 'Try adjusting your search or filter.',
                   );
                 }
                 return Column(
-                  children: rows.map((row) {
+                  children: rows.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final row = entry.value;
                     final color = _statusColor(row.status);
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).cardTheme.color,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(child: Text(row.productName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5))),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                                child: Text(row.status.toUpperCase(), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text('${row.orderNumber} · ${_paymentModelLabels[row.paymentModel] ?? row.paymentModel}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
-                          const SizedBox(height: 4),
-                          Text('${row.importerName} ← ${row.exporterName}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
-                          const SizedBox(height: 4),
-                          Text('${row.currency} ${row.totalAmount.toStringAsFixed(2)} · ${row.releasedCount}/${row.milestoneCount} milestones released', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
-                        ],
+                    return AdminReveal(
+                      index: i,
+                      child: AdminCard(
+                        accent: const Color(0xFF16A34A),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(child: Text(row.productName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                AdminStatusBadge(label: row.status.toUpperCase(), color: color),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text('${row.orderNumber} · ${_paymentModelLabels[row.paymentModel] ?? row.paymentModel}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
+                            const SizedBox(height: 4),
+                            Text('${row.importerName} ← ${row.exporterName}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 4),
+                            Text('${row.currency} ${row.totalAmount.toStringAsFixed(2)} · ${row.releasedCount}/${row.milestoneCount} milestones released', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
+                          ],
+                        ),
                       ),
                     );
                   }).toList(),
@@ -180,6 +164,7 @@ class _AdminPaymentScreenState extends State<AdminPaymentScreen> {
               },
             ),
           ],
+        ),
         ),
       ),
     );

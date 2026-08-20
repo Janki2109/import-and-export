@@ -36,8 +36,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   String _query = '';
   _DateRangeFilter _dateFilter = _DateRangeFilter.all;
   DateTimeRange? _customRange;
-  TxnKind? _typeFilter;
-  String? _statusFilter; // 'Completed' | 'Pending'
+  String? _directionFilter; // 'credit' (Received) | 'debit' (Sent) | null (All)
+  String? _statusFilter; // 'Completed' | 'Pending' | 'Refunded'
   bool _exporting = false;
 
   @override
@@ -67,7 +67,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   List<LedgerEntry> _applyFilters(List<LedgerEntry> txns) {
     var list = txns.where((t) {
       if (_query.trim().isNotEmpty && !t.description.toLowerCase().contains(_query.trim().toLowerCase())) return false;
-      if (_typeFilter != null && classifyTxn(t) != _typeFilter) return false;
+      if (_directionFilter != null && t.entryType != _directionFilter) return false;
       if (_statusFilter != null && txnStatusLabel(t) != _statusFilter) return false;
 
       final now = DateTime.now();
@@ -181,7 +181,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Wallet')),
+      appBar: AppBar(title: const Text('Transaction History')),
       body: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<WalletSummary>(
@@ -197,7 +197,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             final filtered = _applyFilters(wallet.transactions);
 
             final totalReceived = wallet.transactions.where((t) => t.entryType == 'credit').fold<double>(0, (s, t) => s + t.amount);
-            final totalWithdrawn = wallet.transactions.where((t) => classifyTxn(t) == TxnKind.withdrawal && !isTxnPending(t)).fold<double>(0, (s, t) => s + t.amount);
+            final totalSent = wallet.transactions.where((t) => t.entryType == 'debit').fold<double>(0, (s, t) => s + t.amount);
             final pendingWithdrawal = wallet.transactions.where((t) => classifyTxn(t) == TxnKind.withdrawal && isTxnPending(t)).fold<double>(0, (s, t) => s + t.amount);
             final now = DateTime.now();
             final thisMonthEarnings = wallet.transactions.where((t) => t.entryType == 'credit' && t.createdAt.year == now.year && t.createdAt.month == now.month).fold<double>(0, (s, t) => s + t.amount);
@@ -228,7 +228,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       SliverToBoxAdapter(
                         child: _SummaryGrid(
                           totalReceived: totalReceived,
-                          totalWithdrawn: totalWithdrawn,
+                          totalSent: totalSent,
                           pendingWithdrawal: pendingWithdrawal,
                           thisMonthEarnings: thisMonthEarnings,
                         ),
@@ -249,8 +249,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                               setState(() => _dateFilter = f);
                             }
                           },
-                          typeFilter: _typeFilter,
-                          onTypeFilterChanged: (t) => setState(() => _typeFilter = t),
+                          directionFilter: _directionFilter,
+                          onDirectionFilterChanged: (t) => setState(() => _directionFilter = t),
                           statusFilter: _statusFilter,
                           onStatusFilterChanged: (s) => setState(() => _statusFilter = s),
                         ),
@@ -474,10 +474,10 @@ class _EscrowStrip extends StatelessWidget {
 
 class _SummaryGrid extends StatelessWidget {
   final double totalReceived;
-  final double totalWithdrawn;
+  final double totalSent;
   final double pendingWithdrawal;
   final double thisMonthEarnings;
-  const _SummaryGrid({required this.totalReceived, required this.totalWithdrawn, required this.pendingWithdrawal, required this.thisMonthEarnings});
+  const _SummaryGrid({required this.totalReceived, required this.totalSent, required this.pendingWithdrawal, required this.thisMonthEarnings});
 
   @override
   Widget build(BuildContext context) {
@@ -492,7 +492,7 @@ class _SummaryGrid extends StatelessWidget {
         childAspectRatio: 2.1,
         children: [
           _card('Total Received', totalReceived, Icons.arrow_downward, AppColors.success),
-          _card('Total Withdrawn', totalWithdrawn, Icons.arrow_upward, AppColors.error),
+          _card('Total Sent', totalSent, Icons.arrow_upward, AppColors.error),
           _card('Pending Withdrawal', pendingWithdrawal, Icons.hourglass_top_outlined, AppColors.warning),
           _card('This Month Earnings', thisMonthEarnings, Icons.trending_up, AppColors.primary),
         ],
@@ -522,8 +522,8 @@ class _FiltersBar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final _DateRangeFilter dateFilter;
   final ValueChanged<_DateRangeFilter> onDateFilterChanged;
-  final TxnKind? typeFilter;
-  final ValueChanged<TxnKind?> onTypeFilterChanged;
+  final String? directionFilter;
+  final ValueChanged<String?> onDirectionFilterChanged;
   final String? statusFilter;
   final ValueChanged<String?> onStatusFilterChanged;
 
@@ -532,8 +532,8 @@ class _FiltersBar extends StatelessWidget {
     required this.onSearchChanged,
     required this.dateFilter,
     required this.onDateFilterChanged,
-    required this.typeFilter,
-    required this.onTypeFilterChanged,
+    required this.directionFilter,
+    required this.onDirectionFilterChanged,
     required this.statusFilter,
     required this.onStatusFilterChanged,
   });
@@ -566,17 +566,17 @@ class _FiltersBar extends StatelessWidget {
                 const SizedBox(width: 6),
                 _chip('Custom', dateFilter == _DateRangeFilter.custom, () => onDateFilterChanged(_DateRangeFilter.custom)),
                 const SizedBox(width: 12),
-                _chip('All Types', typeFilter == null, () => onTypeFilterChanged(null)),
+                _chip('All', directionFilter == null, () => onDirectionFilterChanged(null)),
                 const SizedBox(width: 6),
-                _chip('Credit', typeFilter == TxnKind.credit, () => onTypeFilterChanged(TxnKind.credit)),
+                _chip('Received', directionFilter == 'credit', () => onDirectionFilterChanged(directionFilter == 'credit' ? null : 'credit')),
                 const SizedBox(width: 6),
-                _chip('Debit', typeFilter == TxnKind.debit, () => onTypeFilterChanged(TxnKind.debit)),
-                const SizedBox(width: 6),
-                _chip('Withdrawal', typeFilter == TxnKind.withdrawal, () => onTypeFilterChanged(TxnKind.withdrawal)),
+                _chip('Sent', directionFilter == 'debit', () => onDirectionFilterChanged(directionFilter == 'debit' ? null : 'debit')),
                 const SizedBox(width: 12),
                 _chip('Completed', statusFilter == 'Completed', () => onStatusFilterChanged(statusFilter == 'Completed' ? null : 'Completed')),
                 const SizedBox(width: 6),
                 _chip('Pending', statusFilter == 'Pending', () => onStatusFilterChanged(statusFilter == 'Pending' ? null : 'Pending')),
+                const SizedBox(width: 6),
+                _chip('Refunded', statusFilter == 'Refunded', () => onStatusFilterChanged(statusFilter == 'Refunded' ? null : 'Refunded')),
               ],
             ),
           ),
@@ -639,6 +639,18 @@ class _TransactionCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text('${d.day}/${d.month}/${d.year} · ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} · ${txnPaymentMethod(t)}',
                           style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                      if (t.orderId != null || t.referenceId != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          [
+                            if (t.orderId != null) 'Order #${t.orderId!.length > 8 ? t.orderId!.substring(0, 8).toUpperCase() : t.orderId!.toUpperCase()}',
+                            if (t.referenceId != null) 'Ref: ${t.referenceId}',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -647,6 +659,7 @@ class _TransactionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text('${t.entryType == 'credit' ? '+' : '-'}₹${t.amount.toStringAsFixed(2)}', style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 13.5)),
+                    Text(txnDirectionLabel(t), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

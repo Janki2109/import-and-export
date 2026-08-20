@@ -24,7 +24,12 @@ class ApiClient {
   static void Function()? onSessionExpired;
 
   late final Dio dio;
-  final _storage = const FlutterSecureStorage();
+  // resetOnError: on some OEM Android devices the Keystore-backed encryption key backing
+  // secure storage can become invalid (e.g. after a reinstall with a different signing key,
+  // or the OS invalidating it) — every read/write then throws instead of returning data.
+  // resetOnError makes the plugin wipe and reinitialize its storage on that failure instead
+  // of throwing, so the app degrades to "no saved session" rather than every request failing.
+  final _storage = const FlutterSecureStorage(aOptions: AndroidOptions(resetOnError: true));
   Future<bool>? _refreshInFlight;
 
   ApiClient._internal() {
@@ -54,11 +59,26 @@ class ApiClient {
 
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final token = await _storage.read(key: AppConstants.tokenKey);
-        if (token != null && token.isNotEmpty) {
-          options.headers['Authorization'] = 'Bearer $token';
+        // BUG FIX: secure storage (Android Keystore-backed) can throw PlatformException on
+        // some OEM devices/ROMs — e.g. after the app was reinstalled with a different signing
+        // key, or the OS invalidated the encryption key (lock-screen change, keystore reset).
+        // Previously that exception propagated out of onRequest, which Dio surfaces as an
+        // opaque DioExceptionType.unknown ("Something went wrong") on EVERY request — including
+        // the very first login/register call, before there's even a token to send. Treat a
+        // failed read as "no token" instead of aborting the request outright.
+        try {
+          final token = await _storage.read(key: AppConstants.tokenKey);
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+        } catch (e) {
+          if (kDebugMode) debugPrint('[ApiClient] secure storage read failed, continuing without auth header: $e');
         }
-        options.headers['X-Device-Id'] = await DeviceIdentity.get();
+        try {
+          options.headers['X-Device-Id'] = await DeviceIdentity.get();
+        } catch (e) {
+          if (kDebugMode) debugPrint('[ApiClient] device id lookup failed, continuing without it: $e');
+        }
         handler.next(options);
       },
       onError: (DioException e, handler) async {
@@ -203,6 +223,9 @@ class ApiClient {
 
   Future<Response> put(String path, {dynamic data}) =>
       dio.put(path, data: data).catchError(_rethrow);
+
+  Future<Response> patch(String path, {dynamic data}) =>
+      dio.patch(path, data: data).catchError(_rethrow);
 
   Future<Response> delete(String path, {dynamic data}) =>
       dio.delete(path, data: data).catchError(_rethrow);

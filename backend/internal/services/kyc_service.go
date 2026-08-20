@@ -88,6 +88,17 @@ func (s *KYCService) Submit(ctx context.Context, in SubmitKYCInput) (*models.KYC
 	if err := s.kycRepo.Upsert(ctx, k); err != nil {
 		return nil, fmt.Errorf("submitting kyc: %w", err)
 	}
+	if s.notification != nil {
+		submitter, err := s.userRepo.GetByID(ctx, in.UserID)
+		name := "A user"
+		if err == nil && submitter != nil {
+			name = submitter.FullName
+		}
+		userID := in.UserID
+		if err := s.notification.NotifyAdmin(ctx, "New KYC Submission", name+" has submitted KYC documents for review.", "kyc", &userID); err != nil {
+			log.Printf("notify: kyc submission admin alert failed: %v", err)
+		}
+	}
 	return k, nil
 }
 

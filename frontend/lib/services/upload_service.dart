@@ -42,4 +42,32 @@ class UploadService {
 
     return fileUrl;
   }
+
+  /// Same presign-then-PUT flow as [uploadFile], but takes raw bytes instead of a
+  /// dart:io File — needed on Flutter Web, where File can't read the blob: URL an
+  /// image/file picker returns.
+  Future<String> uploadBytes({
+    required String category,
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    final presignRes = await _client.post('/uploads/presign', data: {
+      'category': category,
+      'file_name': fileName,
+      'content_type': contentType,
+    });
+    final uploadUrl = presignRes.data['data']['upload_url'] as String;
+    final fileUrl = presignRes.data['data']['file_url'] as String;
+
+    await _rawDio.put(
+      uploadUrl,
+      data: Stream.fromIterable([bytes]),
+      options: Options(
+        headers: {'Content-Type': contentType, 'Content-Length': bytes.length},
+      ),
+    );
+
+    return fileUrl;
+  }
 }

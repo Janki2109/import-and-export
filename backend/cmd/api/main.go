@@ -139,7 +139,8 @@ func main() {
 	} else {
 		log.Println("⚠️  DOCUMENT_ENCRYPTION_KEY not set — chat messages will be stored in plaintext")
 	}
-	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher, documentSecurityService)
+	whatsAppService := services.NewWhatsAppService(cfg)
+	chatService := services.NewChatService(chatRepo, userRepo, orderRepo, shipmentRepo, chatHub, chatCipher, documentSecurityService, whatsAppService, notificationService)
 	aiChatService := services.NewAIChatService(cfg)
 	uploadService := services.NewUploadService(storageService, documentSecurityService)
 	disputeService := services.NewDisputeService(disputeRepo, orderRepo, escrowRepo, userRepo, auditLogRepo, orderService, notificationService)

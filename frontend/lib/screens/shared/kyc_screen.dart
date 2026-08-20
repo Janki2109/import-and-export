@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -604,7 +606,7 @@ class _DocPicker extends StatefulWidget {
 class _DocPickerState extends State<_DocPicker> {
   final _picker = ImagePicker();
   final _uploadService = UploadService();
-  File? _file;
+  Uint8List? _previewBytes;
   bool _uploading = false;
   String? _uploadedUrl;
 
@@ -613,21 +615,29 @@ class _DocPickerState extends State<_DocPicker> {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
     if (picked == null) return;
 
-    final file = File(picked.path);
+    // XFile.readAsBytes() works on every platform (mobile file, web blob: URL alike) —
+    // dart:io File does not, since a web XFile's "path" is a blob: URL it can't open.
+    final bytes = await picked.readAsBytes();
     setState(() {
-      _file = file;
+      _previewBytes = bytes;
       _uploading = true;
       _uploadedUrl = null;
     });
 
     // Fire-and-forget: OCR is a background convenience only. Errors are swallowed —
-    // it must never surface a message or affect the upload/submit flow either way.
-    if (widget.onTextExtracted != null) {
-      _runOcr(file).catchError((_) {});
+    // it must never surface a message or affect the upload/submit flow either way. Not
+    // supported on web (google_mlkit_text_recognition is mobile-only), so skip there.
+    if (widget.onTextExtracted != null && !kIsWeb) {
+      _runOcr(File(picked.path)).catchError((_) {});
     }
 
     try {
-      final url = await _uploadService.uploadFile(category: 'kyc', file: file, contentType: 'image/jpeg');
+      final url = await _uploadService.uploadBytes(
+        category: 'kyc',
+        bytes: bytes,
+        fileName: picked.name,
+        contentType: 'image/jpeg',
+      );
       if (mounted) {
         setState(() => _uploadedUrl = url);
         widget.onUploaded(url);
@@ -667,8 +677,8 @@ class _DocPickerState extends State<_DocPicker> {
         ),
         child: Row(
           children: [
-            if (_file != null)
-              ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(_file!, height: 40, width: 40, fit: BoxFit.cover))
+            if (_previewBytes != null)
+              ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.memory(_previewBytes!, height: 40, width: 40, fit: BoxFit.cover))
             else
               Icon(
                 hasExisting ? Icons.check_circle_outline : Icons.upload_file_outlined,

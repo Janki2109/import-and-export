@@ -170,7 +170,63 @@ class AdvertisementService {
     return list.map((e) => Advertisement.fromJson(e)).toList();
   }
 
-  Future<void> create({required String title, required String imageUrl, String? targetUrl}) async {
-    await _client.post('/ads', data: {'title': title, 'image_url': imageUrl, 'target_url': targetUrl});
+  Future<Advertisement> create({
+    required String title,
+    String? description,
+    String? category,
+    required String mediaType,
+    required String imageUrl,
+    double? price,
+    String? contactInfo,
+    String? targetUrl,
+  }) async {
+    final res = await _client.post('/ads', data: {
+      'title': title,
+      'description': description,
+      'category': category,
+      'media_type': mediaType,
+      'image_url': imageUrl,
+      'price': price,
+      'contact_info': contactInfo,
+      'target_url': targetUrl,
+    });
+    return Advertisement.fromJson(res.data['data']);
+  }
+
+  Future<Advertisement> update(
+    String id, {
+    required String title,
+    String? description,
+    String? category,
+    required String mediaType,
+    required String imageUrl,
+    double? price,
+    String? contactInfo,
+    String? targetUrl,
+  }) async {
+    await _client.put('/ads/$id', data: {
+      'title': title,
+      'description': description,
+      'category': category,
+      'media_type': mediaType,
+      'image_url': imageUrl,
+      'price': price,
+      'contact_info': contactInfo,
+      'target_url': targetUrl,
+    });
+    return getById(id);
+  }
+
+  Future<Advertisement> getById(String id) async {
+    final res = await _client.get('/ads/$id');
+    return Advertisement.fromJson(res.data['data']);
+  }
+
+  Future<void> setActive(String id, bool isActive) async {
+    await _client.patch('/ads/$id/active', data: {'is_active': isActive});
+  }
+
+  Future<void> delete(String id) async {
+    await _client.delete('/ads/$id');
   }
 }

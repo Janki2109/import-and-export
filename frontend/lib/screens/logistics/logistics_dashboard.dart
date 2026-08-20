@@ -19,13 +19,11 @@ import '../shared/kyc_screen.dart';
 import '../shared/membership_screen.dart';
 import '../shared/notifications_screen.dart';
 import '../wallet/wallet_screen.dart';
+import '../../widgets/premium_background.dart';
 import '../../widgets/theme_toggle_button.dart';
 import 'fleet_screen.dart';
 import 'pod_upload_screen.dart';
 
-const _inProgressStatuses = [
-  'picked_up', 'at_warehouse', 'customs_clearance', 'loaded', 'in_transit', 'arrived_at_destination', 'out_for_delivery',
-];
 const _pendingPickupStatuses = ['assigned', 'pending', 'pickup_scheduled'];
 
 /// Logistics/3PL partner's home — status updates + POD upload are the core job (kept
@@ -145,12 +143,20 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final headerColors = isDark ? [AppColorsDark.primary, AppColorsDark.secondary] : [const Color(0xFF0B3D91), const Color(0xFF1857C4)];
     return DoubleBackToExit(child: Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         // FittedBox scales the title down instead of truncating it, so the full
         // "Logistics Dashboard" text always stays visible even on narrow phones.
         title: const FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('Logistics Dashboard')),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(gradient: LinearGradient(colors: headerColors, begin: Alignment.topLeft, end: Alignment.bottomRight)),
+        ),
         actions: [
           const ThemeToggleButton(),
           FutureBuilder<_DashboardBundle>(
@@ -187,7 +193,7 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
           const SizedBox(width: 4),
         ],
       ),
-      body: RefreshIndicator(
+      body: PremiumPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<_DashboardBundle>(
           future: _future,
@@ -207,14 +213,7 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
                     verified: b?.kycVerified ?? false,
                     completionPercent: b?.completionPercent ?? 0,
                     onCompleteProfile: () => _push(const KYCScreen()),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _StatsGrid(
-                    shipments: shipments,
-                    wallet: b?.wallet,
-                    onShipments: _scrollToShipments,
-                    onWallet: () => _push(const WalletScreen()),
+                    onViewProfile: () => _push(const ProfileScreen()),
                   ),
                 ),
                 if (b != null && b.notifications.isNotEmpty)
@@ -240,18 +239,15 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
                   ),
                 ),
                 if (shipments.isNotEmpty) SliverToBoxAdapter(child: _RecentActivity(shipments: shipments)),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  sliver: SliverToBoxAdapter(
-                    key: _shipmentsKey,
-                    child: const _SectionHeader(icon: Icons.local_shipping_outlined, title: 'Assigned Shipments'),
-                  ),
+                SliverToBoxAdapter(
+                  key: _shipmentsKey,
+                  child: _ShipmentsSummaryCard(shipments: shipments),
                 ),
                 if (shipments.isEmpty)
                   const SliverFillRemaining(hasScrollBody: false, child: _LogisticsEmptyState())
                 else
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                     sliver: SliverList.builder(
                       itemCount: shipments.length,
                       itemBuilder: (context, i) => _ShipmentCard(
@@ -266,6 +262,34 @@ class _LogisticsDashboardState extends ConsumerState<LogisticsDashboard> {
             );
           },
         ),
+      )),
+      bottomNavigationBar: _PremiumBottomNav(
+        activeIndex: 0,
+        items: const [
+          (Icons.dashboard_outlined, Icons.dashboard, 'Dashboard'),
+          (Icons.local_shipping_outlined, Icons.local_shipping, 'Shipments'),
+          (Icons.trending_up_outlined, Icons.trending_up, 'Earnings'),
+          (Icons.chat_bubble_outline, Icons.chat_bubble, 'Messages'),
+          (Icons.receipt_long_outlined, Icons.receipt_long, 'Transactions'),
+          (Icons.person_outline, Icons.person, 'Profile'),
+        ],
+        onTap: (i) {
+          switch (i) {
+            case 1:
+              _scrollToShipments();
+              break;
+            case 2:
+            case 4:
+              _push(const WalletScreen());
+              break;
+            case 3:
+              _push(const ConversationsScreen());
+              break;
+            case 5:
+              _push(const ProfileScreen());
+              break;
+          }
+        },
       ),
     ));
   }
@@ -355,16 +379,22 @@ class _TapScaleState extends State<_TapScale> {
       onTapUp: widget.onTap == null ? null : (_) => setState(() => _pressed = false),
       onTapCancel: widget.onTap == null ? null : () => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
+        scale: _pressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 110),
         curve: Curves.easeOut,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: widget.borderRadius,
-          child: InkWell(
-            onTap: widget.onTap,
+        child: AnimatedOpacity(
+          opacity: _pressed ? 0.85 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          child: Material(
+            color: Colors.transparent,
             borderRadius: widget.borderRadius,
-            child: widget.child,
+            child: InkWell(
+              onTap: widget.onTap,
+              borderRadius: widget.borderRadius,
+              splashColor: AppColors.primary.withValues(alpha: 0.15),
+              highlightColor: AppColors.primary.withValues(alpha: 0.08),
+              child: widget.child,
+            ),
           ),
         ),
       ),
@@ -389,6 +419,66 @@ class _Reveal extends StatelessWidget {
         child: Transform.translate(offset: Offset(0, (1 - v) * 14), child: Transform.scale(scale: 0.97 + 0.03 * v, child: c)),
       ),
       child: child,
+    );
+  }
+}
+
+/// Premium bottom navigation — visual only. It does NOT introduce new routes: "Dashboard" is
+/// always the active tab (this bar only ever renders on the dashboard screen itself), and
+/// every other item just triggers the exact same push/scroll callback the equivalent Quick
+/// Action already uses — a shortcut, not a new navigation destination.
+class _PremiumBottomNav extends StatelessWidget {
+  final int activeIndex;
+  final List<(IconData, IconData, String)> items;
+  final void Function(int index) onTap;
+  const _PremiumBottomNav({required this.activeIndex, required this.items, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08), blurRadius: 16, offset: const Offset(0, -4))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            for (int i = 0; i < items.length; i++)
+              Expanded(
+                child: _TapScale(
+                  onTap: i == activeIndex ? null : () => onTap(i),
+                  borderRadius: BorderRadius.circular(14),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    decoration: BoxDecoration(
+                      color: i == activeIndex ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(i == activeIndex ? items[i].$2 : items[i].$1, size: 20, color: i == activeIndex ? AppColors.primary : AppColors.textSecondary),
+                        const SizedBox(height: 3),
+                        Text(
+                          items[i].$3,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 9, fontWeight: i == activeIndex ? FontWeight.w700 : FontWeight.w500, color: i == activeIndex ? AppColors.primary : AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -454,6 +544,7 @@ class _WelcomeCard extends StatelessWidget {
   final bool verified;
   final int completionPercent;
   final VoidCallback onCompleteProfile;
+  final VoidCallback onViewProfile;
   const _WelcomeCard({
     required this.name,
     this.companyName,
@@ -461,6 +552,7 @@ class _WelcomeCard extends StatelessWidget {
     required this.verified,
     required this.completionPercent,
     required this.onCompleteProfile,
+    required this.onViewProfile,
   });
 
   @override
@@ -490,7 +582,10 @@ class _WelcomeCard extends StatelessWidget {
         child: Stack(
           children: [
             const _HeroBackdrop(),
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
@@ -602,6 +697,29 @@ class _WelcomeCard extends StatelessWidget {
             ),
           ],
             ),
+                const SizedBox(height: 14),
+                _TapScale(
+                  onTap: onViewProfile,
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('View Profile', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                        SizedBox(width: 6),
+                        Icon(Icons.arrow_forward, color: Colors.white, size: 15),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -609,116 +727,74 @@ class _WelcomeCard extends StatelessWidget {
   }
 }
 
-/// 8-card, 2-column statistics grid — all figures derived from real, already-fetched data
-/// (shipments list + wallet summary). Average Rating shows "—" honestly since no rating
-/// system exists in the backend; Pending Payments is the same escrow-pending field every
-/// wallet exposes (currently always 0 for logistics accounts — an honest zero).
-class _StatsGrid extends StatelessWidget {
+/// Dark "Shipments" summary card — a real, honest breakdown of the same `shipments` list
+/// already fetched for the list below (Pending Pickup / Picked Up / In Transit / Delivered).
+class _ShipmentsSummaryCard extends StatelessWidget {
   final List<Shipment> shipments;
-  final WalletSummary? wallet;
-  final VoidCallback onShipments;
-  final VoidCallback onWallet;
-  const _StatsGrid({required this.shipments, required this.wallet, required this.onShipments, required this.onWallet});
+  const _ShipmentsSummaryCard({required this.shipments});
 
   @override
   Widget build(BuildContext context) {
-    final active = shipments.where((s) => _inProgressStatuses.contains(s.status)).length;
-    final completed = shipments.where((s) => s.status == 'delivered').length;
-    final pendingPickups = shipments.where((s) => _pendingPickupStatuses.contains(s.status)).length;
-    final earnings = (wallet?.transactions ?? []).where((t) => t.entryType == 'credit').fold<double>(0, (sum, t) => sum + t.amount);
-    final walletBalance = wallet?.balance ?? 0;
-    final pendingPayments = wallet?.pendingRelease ?? 0;
-
+    final pendingPickup = shipments.where((s) => _pendingPickupStatuses.contains(s.status)).length;
+    final pickedUp = shipments.where((s) => ['picked_up', 'at_warehouse', 'customs_clearance', 'loaded'].contains(s.status)).length;
+    final inTransit = shipments.where((s) => ['in_transit', 'arrived_at_destination', 'out_for_delivery'].contains(s.status)).length;
+    final delivered = shipments.where((s) => s.status == 'delivered').length;
     final items = [
-      ('Assigned Shipments', '${shipments.length}', Icons.local_shipping_outlined, AppColors.primary, onShipments),
-      ('Active Deliveries', '$active', Icons.route_outlined, AppColors.heldBlue, onShipments),
-      ('Completed Deliveries', '$completed', Icons.task_alt_outlined, AppColors.success, onShipments),
-      ('Pending Pickups', '$pendingPickups', Icons.event_available_outlined, AppColors.warning, onShipments),
-      ('Earnings', '₹${earnings.toStringAsFixed(0)}', Icons.trending_up, Colors.purple, onWallet),
-      ('Wallet Balance', '₹${walletBalance.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.success, onWallet),
-      ('Average Rating', '—', Icons.star_outline, AppColors.accent, onShipments),
-      ('Pending Payments', '₹${pendingPayments.toStringAsFixed(0)}', Icons.hourglass_top_outlined, AppColors.warning, onWallet),
+      (Icons.event_available_outlined, '$pendingPickup', 'Pending Pickup', const Color(0xFF60A5FA)),
+      (Icons.inventory_2_outlined, '$pickedUp', 'Picked Up', const Color(0xFFFACC15)),
+      (Icons.local_shipping_outlined, '$inTransit', 'In Transit', const Color(0xFFFB923C)),
+      (Icons.task_alt_outlined, '$delivered', 'Delivered', const Color(0xFF4ADE80)),
     ];
-
-    const crossAxisCount = 2;
-    const spacing = 10.0;
-    // Target a fixed card height (not one derived from a width-based aspect ratio) so cards
-    // stay tall enough to fit icon + value + a 2-line label on narrow phones, instead of
-    // shrinking (and overflowing) as the screen gets smaller.
-    const targetCardHeight = 128.0;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cellWidth = (constraints.maxWidth - spacing * (crossAxisCount - 1)) / crossAxisCount;
-          final aspectRatio = cellWidth / targetCardHeight;
-          return GridView.count(
-            crossAxisCount: crossAxisCount,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: spacing,
-            crossAxisSpacing: spacing,
-            childAspectRatio: aspectRatio,
+      child: _Reveal(
+        index: 0,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Color(0xFF0B3D91), Color(0xFF1857C4)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [BoxShadow(color: const Color(0xFF0B3D91).withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 10))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (int i = 0; i < items.length; i++)
-                _Reveal(index: i, child: _StatCard(label: items[i].$1, value: items[i].$2, icon: items[i].$3, color: items[i].$4, onTap: items[i].$5)),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return _TapScale(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withValues(alpha: 0.10)),
-          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.10), blurRadius: 14, offset: const Offset(0, 6))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.max,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(10),
+              Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.local_shipping_outlined, size: 16, color: Colors.white),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Assigned Shipments', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5)),
+                ],
               ),
-              child: Icon(icon, size: 17, color: color),
-            ),
-            const SizedBox(height: 8),
-            // FittedBox scales the value down instead of overflowing/clipping for large
-            // figures (e.g. big earnings/wallet amounts).
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15.5, letterSpacing: -0.3), maxLines: 1),
-            ),
-            const SizedBox(height: 4),
-            // Expanded + maxLines:2 lets the label wrap to a second line and absorbs any
-            // remaining card height, so it can never overflow the card.
-            Expanded(
-              child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5, fontWeight: FontWeight.w500), maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-          ],
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  for (final it in items)
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(color: it.$4.withValues(alpha: 0.18), shape: BoxShape.circle),
+                            child: Icon(it.$1, size: 16, color: it.$4),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(it.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                          const SizedBox(height: 2),
+                          Text(it.$3, style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 9.5), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -815,14 +891,14 @@ class _QuickActionsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      (Icons.local_shipping_outlined, 'Assigned\nShipments', onAssignedShipments, AppColors.primary),
-      (Icons.event_available_outlined, 'Pickup\nRequests', onPickupRequests, AppColors.warning),
-      (Icons.route_outlined, 'Delivery\nTracking', onDeliveryTracking, AppColors.heldBlue),
-      (Icons.trending_up, 'Earnings', onEarnings, Colors.purple),
-      (Icons.account_balance_wallet_outlined, 'Wallet', onWallet, AppColors.success),
-      (Icons.chat_bubble_outline, 'Messages', onMessages, AppColors.accent),
-      (Icons.description_outlined, 'Documents', onDocuments, AppColors.secondary),
-      (Icons.person_outline, 'Profile', onProfile, AppColors.primary),
+      (Icons.local_shipping_outlined, 'Assigned\nShipments', onAssignedShipments, const Color(0xFF2563EB)),
+      (Icons.event_available_outlined, 'Pickup\nRequests', onPickupRequests, const Color(0xFFCA8A04)),
+      (Icons.route_outlined, 'Delivery\nTracking', onDeliveryTracking, const Color(0xFF0EA5E9)),
+      (Icons.trending_up, 'Earnings', onEarnings, const Color(0xFF7C3AED)),
+      (Icons.receipt_long_outlined, 'Transaction History', onWallet, const Color(0xFF16A34A)),
+      (Icons.chat_bubble_outline, 'Messages', onMessages, const Color(0xFFEA580C)),
+      (Icons.description_outlined, 'Documents', onDocuments, const Color(0xFFDB2777)),
+      (Icons.person_outline, 'Profile', onProfile, const Color(0xFF0D9488)),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -866,10 +942,12 @@ class _QuickActionTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Theme.of(context).cardTheme.color,
           borderRadius: BorderRadius.circular(18),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
+          border: Border.all(color: color.withValues(alpha: 0.14)),
+          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.16), blurRadius: 12, offset: const Offset(0, 5))],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -878,13 +956,16 @@ class _QuickActionTile extends StatelessWidget {
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.65)], begin: Alignment.topLeft, end: Alignment.bottomRight),
                 borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 3))],
               ),
-              child: Icon(icon, color: color, size: 19),
+              child: Icon(icon, color: Colors.white, size: 19),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, height: 1.2)),
+            const SizedBox(height: 6),
+            Container(height: 3, width: 18, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
           ],
         ),
       ),
@@ -1033,21 +1114,21 @@ class _ShipmentCard extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   if (s.status == 'assigned')
-                    _actionChip('Pickup Scheduled', Icons.event_available_outlined, () => onUpdateStatus(s, 'pickup_scheduled')),
+                    _actionChip('Pickup Scheduled', Icons.event_available_outlined, () => onUpdateStatus(s, 'pickup_scheduled'), color: const Color(0xFFCA8A04)),
                   if (s.status == 'pickup_scheduled')
-                    _actionChip('Goods Picked Up', Icons.inventory_2_outlined, () => onUpdateStatus(s, 'picked_up')),
+                    _actionChip('Goods Picked Up', Icons.inventory_2_outlined, () => onUpdateStatus(s, 'picked_up'), color: const Color(0xFF2563EB)),
                   if (s.status == 'picked_up')
-                    _actionChip('At Warehouse', Icons.warehouse_outlined, () => onUpdateStatus(s, 'at_warehouse')),
+                    _actionChip('At Warehouse', Icons.warehouse_outlined, () => onUpdateStatus(s, 'at_warehouse'), color: const Color(0xFF7C3AED)),
                   if (s.status == 'at_warehouse')
-                    _actionChip('Customs Clearance', Icons.gavel_outlined, () => onUpdateStatus(s, 'customs_clearance')),
+                    _actionChip('Customs Clearance', Icons.gavel_outlined, () => onUpdateStatus(s, 'customs_clearance'), color: const Color(0xFFDB2777)),
                   if (s.status == 'customs_clearance')
-                    _actionChip('Loaded on Ship/Flight', Icons.flight_takeoff_outlined, () => onUpdateStatus(s, 'loaded')),
+                    _actionChip('Loaded on Ship/Flight', Icons.flight_takeoff_outlined, () => onUpdateStatus(s, 'loaded'), color: const Color(0xFF0EA5E9)),
                   if (s.status == 'loaded')
-                    _actionChip('In Transit', Icons.local_shipping_outlined, () => onUpdateStatus(s, 'in_transit')),
+                    _actionChip('In Transit', Icons.local_shipping_outlined, () => onUpdateStatus(s, 'in_transit'), color: const Color(0xFF0D9488)),
                   if (s.status == 'in_transit')
-                    _actionChip('Arrived at Destination', Icons.anchor_outlined, () => onUpdateStatus(s, 'arrived_at_destination')),
+                    _actionChip('Arrived at Destination', Icons.anchor_outlined, () => onUpdateStatus(s, 'arrived_at_destination'), color: const Color(0xFFEA580C)),
                   if (s.status == 'arrived_at_destination')
-                    _actionChip('Out for Delivery', Icons.delivery_dining_outlined, () => onUpdateStatus(s, 'out_for_delivery')),
+                    _actionChip('Out for Delivery', Icons.delivery_dining_outlined, () => onUpdateStatus(s, 'out_for_delivery'), color: const Color(0xFF9333EA)),
                   if (s.status == 'out_for_delivery')
                     _actionChip('Delivered', Icons.check_circle_outline, () => onCaptureDelivery(s), color: AppColors.success),
                 ],
@@ -1073,11 +1154,26 @@ class _ShipmentCard extends StatelessWidget {
   }
 
   Widget _actionChip(String label, IconData icon, VoidCallback onTap, {Color? color}) {
-    return ActionChip(
-      avatar: Icon(icon, size: 16, color: color ?? AppColors.primary),
-      label: Text(label, style: TextStyle(color: color ?? AppColors.primary, fontWeight: FontWeight.w600)),
-      backgroundColor: (color ?? AppColors.primary).withValues(alpha: 0.08),
-      onPressed: onTap,
+    final c = color ?? AppColors.primary;
+    return _TapScale(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(30),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [c, c.withValues(alpha: 0.75)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [BoxShadow(color: c.withValues(alpha: 0.35), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5)),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -193,6 +193,20 @@ class _AdminDashboardState extends ConsumerState<AdminDashboard> {
         // FittedBox scales the title down instead of truncating it, so the full "Admin
         // Panel" text always stays visible even on narrow phones with several action icons.
         title: const FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('Admin Panel')),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: Theme.of(context).brightness == Brightness.dark
+                  ? [AppColorsDark.primary, AppColorsDark.secondary]
+                  : [const Color(0xFF0B3D91), const Color(0xFF1857C4)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
@@ -211,7 +225,131 @@ class _AdminDashboardState extends ConsumerState<AdminDashboard> {
       ),
       drawer: Drawer(child: sidebar),
       body: _body(),
+      bottomNavigationBar: _AdminBottomNav(active: _active, onSelect: _select),
     ));
+  }
+}
+
+/// Premium bottom navigation for narrow/mobile layouts — mirrors the Importer/Exporter/
+/// Logistics dashboards' bottom nav style. Covers the most-used sections directly; "More"
+/// opens the existing drawer (which already lists every admin section), so nothing here
+/// duplicates or bypasses the existing sidebar navigation — it's just a faster shortcut to it.
+class _AdminBottomNav extends StatelessWidget {
+  final _Section active;
+  final ValueChanged<_NavItem> onSelect;
+  const _AdminBottomNav({required this.active, required this.onSelect});
+
+  static const _items = [
+    (Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', _Section.dashboard),
+    (Icons.people_outline, Icons.people, 'Users', _Section.users),
+    (Icons.receipt_long_outlined, Icons.receipt_long, 'Orders', _Section.orders),
+    (Icons.local_shipping_outlined, Icons.local_shipping, 'Shipments', _Section.shipments),
+    (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, 'Payments', _Section.payments),
+    (Icons.person_outline, Icons.person, 'Profile', _Section.profile),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08), blurRadius: 16, offset: const Offset(0, -4))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            for (final it in _items)
+              Expanded(
+                child: _TapScale(
+                  onTap: it.$4 == active ? null : () => onSelect(_NavItem(it.$3, it.$1, it.$4)),
+                  borderRadius: BorderRadius.circular(14),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    decoration: BoxDecoration(
+                      color: it.$4 == active ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(it.$4 == active ? it.$2 : it.$1, size: 20, color: it.$4 == active ? AppColors.primary : AppColors.textSecondary),
+                        const SizedBox(height: 3),
+                        Text(it.$3, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 9, fontWeight: it.$4 == active ? FontWeight.w700 : FontWeight.w500, color: it.$4 == active ? AppColors.primary : AppColors.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Press-scale micro-interaction — same pattern used across the Importer/Exporter/Logistics
+/// dashboards, duplicated here locally since it's a private per-file widget in each of those.
+class _TapScale extends StatefulWidget {
+  final VoidCallback? onTap;
+  final Widget child;
+  final BorderRadius? borderRadius;
+  const _TapScale({required this.onTap, required this.child, this.borderRadius});
+
+  @override
+  State<_TapScale> createState() => _TapScaleState();
+}
+
+class _TapScaleState extends State<_TapScale> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: widget.onTap == null ? null : (_) => setState(() => _pressed = true),
+      onTapUp: widget.onTap == null ? null : (_) => setState(() => _pressed = false),
+      onTapCancel: widget.onTap == null ? null : () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: widget.borderRadius,
+          child: InkWell(
+            onTap: widget.onTap,
+            borderRadius: widget.borderRadius,
+            splashColor: AppColors.primary.withValues(alpha: 0.15),
+            highlightColor: AppColors.primary.withValues(alpha: 0.08),
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Staggered entrance — fade + slide-up, delayed by [index]. Same pattern used across the
+/// role dashboards for cards/grids.
+class _Reveal extends StatelessWidget {
+  final int index;
+  final Widget child;
+  const _Reveal({required this.index, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 240 + (index * 30).clamp(0, 300)),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, c) => Opacity(opacity: v, child: Transform.translate(offset: Offset(0, (1 - v) * 12), child: c)),
+      child: child,
+    );
   }
 }
 
@@ -444,7 +582,15 @@ class _AdminDashboardHomeState extends State<_AdminDashboardHome> {
             children: [
               const _AdminWelcomeCard(),
               const SizedBox(height: 16),
-              _StatGrid(analytics: d.analytics, escrow: d.escrow, charts: d.charts),
+              const _AdminRecentNotificationsCard(),
+              const SizedBox(height: 20),
+              Text('Quick Actions', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              _QuickActionsGrid(),
+              const SizedBox(height: 20),
+              Text('Overview', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              _CompactStatsStrip(analytics: d.analytics, escrow: d.escrow, charts: d.charts),
               const SizedBox(height: 20),
               Text('Charts & Trends', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
@@ -619,6 +765,55 @@ class _AdminWelcomeCard extends ConsumerWidget {
   }
 }
 
+/// Recent Notifications shortcut card — a lightweight entry point into the existing
+/// AdminNotificationScreen (same screen the header bell icon already opens). Doesn't
+/// preview individual notifications inline since there's no existing "recent notifications
+/// preview" endpoint to pull from without inventing one; this stays honest about that.
+class _AdminRecentNotificationsCard extends StatelessWidget {
+  const _AdminRecentNotificationsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Reveal(
+      index: 0,
+      child: _TapScale(
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminNotificationScreen())),
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardTheme.color,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.notifications_outlined, size: 20, color: AppColors.primary),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Recent Notifications', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    SizedBox(height: 2),
+                    Text('View platform alerts and updates', style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Recent Activity — Latest KYC Requests, Latest RFQs, Latest Disputes, Recent Payments (via
 /// recent orders' payout amounts), all drawn from data already fetched for this screen (no
 /// new backend calls). Recent Notifications isn't duplicated here since the header bell
@@ -691,71 +886,91 @@ class _RecentActivity extends StatelessWidget {
   }
 }
 
-class _StatGrid extends StatelessWidget {
+/// Compact statistics strip — same real figures the old large stat grid showed, now as a
+/// horizontally-scrollable row of small chips so they no longer dominate the dashboard;
+/// the primary navigation surface is the Quick Actions grid above. Each chip is still
+/// tappable through to its relevant existing section.
+class _CompactStatsStrip extends StatelessWidget {
   final Analytics analytics;
   final EscrowSummary escrow;
   final ChartAnalytics charts;
-  const _StatGrid({required this.analytics, required this.escrow, required this.charts});
+  const _CompactStatsStrip({required this.analytics, required this.escrow, required this.charts});
 
   @override
   Widget build(BuildContext context) {
+    final state = context.findAncestorStateOfType<_AdminDashboardState>();
+    void go(_Section s, String label, IconData icon) => state?._select(_NavItem(label, icon, s));
+
     final stats = [
-      ('Total Importers', '${analytics.totalImporters}', Icons.storefront_outlined, AppColors.primary),
-      ('Total Exporters', '${analytics.totalExporters}', Icons.local_shipping_outlined, AppColors.secondary),
-      ('Total Logistics', '${analytics.totalLogistics}', Icons.local_shipping_outlined, AppColors.accent),
-      ('Total Orders', '${analytics.totalOrders}', Icons.receipt_long_outlined, AppColors.heldBlue),
-      ('Open RFQs', '${charts.openRfqCount}', Icons.request_quote_outlined, AppColors.warning),
-      ('Active Shipments', '${charts.activeShipmentCount}', Icons.local_shipping_outlined, AppColors.primary),
-      ('Escrow Balance', '₹${escrow.holdingBalance.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.heldBlue),
-      ('Released Payments', '₹${escrow.totalReleased.toStringAsFixed(0)}', Icons.check_circle_outline, AppColors.success),
-      ('Wallet Transactions', '${charts.walletTxnCount}', Icons.savings_outlined, AppColors.secondary),
-      ('Revenue', '₹${analytics.totalPlatformFees.toStringAsFixed(0)}', Icons.trending_up, AppColors.success),
+      ('Importers', '${analytics.totalImporters}', Icons.storefront_outlined, const Color(0xFF2563EB), () => go(_Section.users, 'Users', Icons.people_outline)),
+      ('Exporters', '${analytics.totalExporters}', Icons.public_outlined, const Color(0xFF7C3AED), () => go(_Section.users, 'Users', Icons.people_outline)),
+      ('Logistics', '${analytics.totalLogistics}', Icons.local_shipping_outlined, const Color(0xFF0EA5E9), () => go(_Section.logistics, 'Logistics', Icons.local_shipping_outlined)),
+      ('Orders', '${analytics.totalOrders}', Icons.receipt_long_outlined, const Color(0xFFEA580C), () => go(_Section.orders, 'Orders', Icons.receipt_long_outlined)),
+      ('Open RFQs', '${charts.openRfqCount}', Icons.request_quote_outlined, const Color(0xFFCA8A04), () => go(_Section.rfqs, 'RFQs', Icons.request_quote_outlined)),
+      ('Active Shipments', '${charts.activeShipmentCount}', Icons.local_shipping_outlined, const Color(0xFF0D9488), () => go(_Section.shipments, 'Shipments', Icons.local_shipping_outlined)),
+      ('Escrow Balance', '₹${escrow.holdingBalance.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, const Color(0xFF2563EB), () => go(_Section.escrow, 'Escrow', Icons.account_balance_wallet_outlined)),
+      ('Released Payments', '₹${escrow.totalReleased.toStringAsFixed(0)}', Icons.check_circle_outline, const Color(0xFF16A34A), () => go(_Section.escrow, 'Escrow', Icons.account_balance_wallet_outlined)),
+      ('Wallet Txns', '${charts.walletTxnCount}', Icons.savings_outlined, const Color(0xFFDB2777), () => go(_Section.wallets, 'Wallets', Icons.savings_outlined)),
+      ('Revenue', '₹${analytics.totalPlatformFees.toStringAsFixed(0)}', Icons.trending_up, const Color(0xFF16A34A), () => go(_Section.reports, 'Reports', Icons.bar_chart_outlined)),
     ];
-    // Target a fixed card height (not one derived from a width-based aspect ratio) so cards
-    // stay tall enough to fit icon + value + a 2-line label on narrow phones, instead of
-    // shrinking (and overflowing) as the screen gets smaller or more columns are packed in.
-    const targetCardHeight = 128.0;
-    const spacing = 12.0;
-    return LayoutBuilder(builder: (context, constraints) {
-      final cols = constraints.maxWidth >= 900 ? 5 : (constraints.maxWidth >= 600 ? 3 : 2);
-      final cellWidth = (constraints.maxWidth - spacing * (cols - 1)) / cols;
-      final aspectRatio = cellWidth / targetCardHeight;
-      return GridView.count(
-        crossAxisCount: cols,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: spacing,
-        crossAxisSpacing: spacing,
-        childAspectRatio: aspectRatio,
-        children: stats
-            .map((s) => Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(color: Theme.of(context).cardTheme.color, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 4))]),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Container(width: 30, height: 30, decoration: BoxDecoration(color: s.$4.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9)), child: Icon(s.$3, size: 15, color: s.$4)),
-                      const SizedBox(height: 8),
-                      // FittedBox scales large values (e.g. big revenue/escrow figures)
-                      // down instead of overflowing/clipping.
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(s.$2, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16), maxLines: 1),
-                      ),
-                      const SizedBox(height: 4),
-                      // Expanded + maxLines:2 lets the label wrap to a second line and
-                      // absorbs remaining card height, so it can never overflow the card.
-                      Expanded(
-                        child: Text(s.$1, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5), maxLines: 2, overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
-                  ),
-                ))
-            .toList(),
-      );
-    });
+
+    return SizedBox(
+      height: 84,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: stats.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, i) {
+          final s = stats[i];
+          return _Reveal(
+            index: i,
+            child: _TapScale(
+              onTap: s.$5,
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                width: 128,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardTheme.color,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: s.$4.withValues(alpha: 0.12)),
+                  boxShadow: [BoxShadow(color: s.$4.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 3))],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 22,
+                          height: 22,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(colors: [s.$4, s.$4.withValues(alpha: 0.65)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Icon(s.$3, size: 12, color: Colors.white),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(s.$2, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: -0.3), maxLines: 1),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.$1, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.w500), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -938,43 +1153,71 @@ class _QuickActionsGridState extends State<_QuickActionsGrid> {
   Widget build(BuildContext context) {
     final state = context.findAncestorStateOfType<_AdminDashboardState>();
     // Every item routes to its existing admin screen via the same sidebar-section switch
-    // the rest of the shell uses. "Export Reports" has no separate screen in this app —
-    // it opens the same Reports screen (which contains the export controls) as "View
-    // Reports", rather than inventing a new backend flow.
+    // the rest of the shell uses — no new screens, no new backend calls. Importers/
+    // Exporters/Logistics Partners/Users all open AdminUsersScreen (the only existing user
+    // management screen; it has no role-filter constructor param to split them further).
+    // "Revenue" has no dedicated screen in this app, so it opens Reports (the closest
+    // existing financial view) rather than inventing one. "Export Reports" and "View
+    // Reports" both open the same Reports screen, which already contains export controls.
     final items = [
-      ('Approve KYC', Icons.verified_user_outlined, _Section.kyc),
-      ('Manage Users', Icons.people_outline, _Section.users),
-      ('Manage Orders', Icons.receipt_long_outlined, _Section.orders),
-      ('Release Escrow', Icons.account_balance_wallet_outlined, _Section.escrow),
-      ('Review Disputes', Icons.report_problem_outlined, _Section.disputes),
-      ('View Reports', Icons.bar_chart_outlined, _Section.reports),
-      ('Export Reports', Icons.ios_share_outlined, _Section.reports),
-      ('Platform Settings', Icons.settings_outlined, _Section.settings),
+      ('Importers', Icons.storefront_outlined, _Section.users, const Color(0xFF2563EB)),
+      ('Exporters', Icons.public_outlined, _Section.users, const Color(0xFF7C3AED)),
+      ('Logistics Partners', Icons.local_shipping_outlined, _Section.logistics, const Color(0xFF0EA5E9)),
+      ('All Users', Icons.people_outline, _Section.users, const Color(0xFFDB2777)),
+      ('Orders', Icons.receipt_long_outlined, _Section.orders, const Color(0xFFEA580C)),
+      ('RFQs', Icons.request_quote_outlined, _Section.rfqs, const Color(0xFFCA8A04)),
+      ('Shipments', Icons.local_shipping_outlined, _Section.shipments, const Color(0xFF0D9488)),
+      ('KYC / Documents', Icons.verified_user_outlined, _Section.kyc, const Color(0xFF16A34A)),
+      ('Payments / Escrow', Icons.account_balance_wallet_outlined, _Section.escrow, const Color(0xFF2563EB)),
+      ('Transactions', Icons.savings_outlined, _Section.wallets, const Color(0xFFDB2777)),
+      ('Revenue', Icons.trending_up, _Section.reports, const Color(0xFF16A34A)),
+      ('Disputes', Icons.report_problem_outlined, _Section.disputes, const Color(0xFFEA580C)),
+      ('Notifications', Icons.campaign_outlined, _Section.notifications, const Color(0xFF9333EA)),
+      ('Messages / Chats', Icons.forum_outlined, _Section.chats, const Color(0xFF0891B2)),
+      ('Reports', Icons.bar_chart_outlined, _Section.reports, const Color(0xFF0EA5E9)),
+      ('Settings', Icons.settings_outlined, _Section.settings, const Color(0xFF64748B)),
     ];
     return GridView.count(
-      crossAxisCount: 3,
+      crossAxisCount: 4,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       mainAxisSpacing: 10,
       crossAxisSpacing: 10,
-      childAspectRatio: 1.1,
-      children: items
-          .map((it) => InkWell(
-                onTap: () => state?._select(_NavItem(it.$1, it.$2, it.$3)),
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  decoration: BoxDecoration(color: Theme.of(context).cardTheme.color, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))]),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(it.$2, color: AppColors.primary, size: 22),
-                      const SizedBox(height: 6),
-                      Text(it.$1, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
+      childAspectRatio: 0.85,
+      children: [
+        for (int i = 0; i < items.length; i++)
+          _Reveal(
+            index: i,
+            child: _TapScale(
+              onTap: () => state?._select(_NavItem(items[i].$1, items[i].$2, items[i].$3)),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                decoration: BoxDecoration(color: Theme.of(context).cardTheme.color, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))]),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [items[i].$4, items[i].$4.withValues(alpha: 0.65)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(items[i].$2, color: Colors.white, size: 19),
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Text(items[i].$1, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(height: 3, width: 20, decoration: BoxDecoration(color: items[i].$4, borderRadius: BorderRadius.circular(2))),
+                  ],
                 ),
-              ))
-          .toList(),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/onboarding/screens/onboarding_flow_screen.dart';
+import '../navigation/navigator_key.dart';
 import '../../features/onboarding/services/app_guide_prefs.dart';
 import '../../models/user.dart';
 import '../../providers/auth_provider.dart';
@@ -50,6 +51,7 @@ const _onboardingGatePaths = [
 /// focused on the part that actually needs centralizing: where does the user belong right now.
 GoRouter buildRouter(AuthProvider auth) {
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/splash',
     refreshListenable: auth,
     routes: [

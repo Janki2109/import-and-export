@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/compliance.dart';
 import '../../services/compliance_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 const _statusFilters = [null, 'uploaded', 'verified', 'rejected', 'pending'];
 const _statusLabels = {null: 'All', 'uploaded': 'Pending Review', 'verified': 'Verified', 'rejected': 'Rejected', 'pending': 'Not Uploaded'};
@@ -34,13 +35,15 @@ class _AdminComplianceScreenState extends State<AdminComplianceScreen> with Sing
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Compliance Center'),
+      appBar: AdminGradientAppBar(
+        title: 'Compliance Center',
         bottom: TabBar(controller: _tabController, tabs: const [Tab(text: 'Documents'), Tab(text: 'Rules')]),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: const [_ComplianceDocumentsTab(), _ComplianceRulesTab()],
+      body: AdminPageBackground(
+        child: TabBarView(
+          controller: _tabController,
+          children: const [_ComplianceDocumentsTab(), _ComplianceRulesTab()],
+        ),
       ),
     );
   }
@@ -157,15 +160,9 @@ class _ComplianceDocumentsTabState extends State<_ComplianceDocumentsTab> {
             },
           ),
           const SizedBox(height: 16),
-          TextField(
+          AdminSearchField(
+            hint: 'Search by order #, document, importer, exporter',
             onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: 'Search by order #, document, importer, exporter',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: Theme.of(context).cardTheme.color,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-            ),
           ),
           const SizedBox(height: 10),
           SizedBox(
@@ -210,41 +207,27 @@ class _ComplianceDocumentsTabState extends State<_ComplianceDocumentsTab> {
                     r.exporterName.toLowerCase().contains(q)).toList();
               }
               if (rows.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      children: [
-                        Icon(Icons.fact_check_outlined, size: 44, color: AppColors.textSecondary.withValues(alpha: 0.4)),
-                        const SizedBox(height: 12),
-                        const Text('No compliance documents found.', style: TextStyle(color: AppColors.textSecondary)),
-                      ],
-                    ),
-                  ),
+                return const AdminEmptyState(
+                  icon: Icons.fact_check_outlined,
+                  title: 'No compliance documents found.',
                 );
               }
               return Column(
-                children: rows.map((row) {
+                children: rows.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  final row = entry.value;
                   final color = _statusColor(row.status);
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardTheme.color,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))],
-                    ),
+                  return AdminReveal(
+                    index: i,
+                    child: AdminCard(
+                    accent: color,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Expanded(child: Text(row.documentName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5))),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
-                              child: Text(statusLabel(row.status), style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                            ),
+                            Expanded(child: Text(row.documentName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                            AdminStatusBadge(label: statusLabel(row.status), color: color),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -292,6 +275,7 @@ class _ComplianceDocumentsTabState extends State<_ComplianceDocumentsTab> {
                           ],
                         ),
                       ],
+                    ),
                     ),
                   );
                 }).toList(),
@@ -457,7 +441,8 @@ class _ComplianceRulesTabState extends State<_ComplianceRulesTab> {
         icon: const Icon(Icons.add),
         label: const Text('New Rule'),
       ),
-      body: RefreshIndicator(
+      body: AdminPageBackground(
+        child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<List<ComplianceRule>>(
           future: _future,
@@ -470,17 +455,9 @@ class _ComplianceRulesTabState extends State<_ComplianceRulesTab> {
             }
             final rules = snapshot.data ?? [];
             if (rules.isEmpty) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    children: [
-                      Icon(Icons.rule_folder_outlined, size: 44, color: AppColors.textSecondary.withValues(alpha: 0.4)),
-                      const SizedBox(height: 12),
-                      const Text('No compliance rules configured yet.', style: TextStyle(color: AppColors.textSecondary)),
-                    ],
-                  ),
-                ),
+              return const AdminEmptyState(
+                icon: Icons.rule_folder_outlined,
+                title: 'No compliance rules configured yet.',
               );
             }
             return ListView.builder(
@@ -488,21 +465,18 @@ class _ComplianceRulesTabState extends State<_ComplianceRulesTab> {
               itemCount: rules.length,
               itemBuilder: (context, i) {
                 final rule = rules[i];
-                return Container(
+                return AdminReveal(
+                  index: i,
+                  child: AdminCard(
                   margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardTheme.color,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 3))],
-                  ),
+                  accent: const Color(0xFFCA8A04),
                   child: Row(
                     children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(rule.documentName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                            Text(rule.documentName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis),
                             const SizedBox(height: 3),
                             Text(
                               '${rule.originCountry ?? 'Any'} → ${rule.destinationCountry ?? 'Any'} · ${rule.shippingMode ?? 'Any mode'} · ${rule.hsCode ?? 'Any HS Code'}',
@@ -516,10 +490,12 @@ class _ComplianceRulesTabState extends State<_ComplianceRulesTab> {
                       IconButton(icon: const Icon(Icons.delete_outline, color: AppColors.error), onPressed: () => _delete(rule)),
                     ],
                   ),
+                  ),
                 );
               },
             );
           },
+        ),
         ),
       ),
     );

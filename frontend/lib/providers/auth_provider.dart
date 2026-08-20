@@ -11,7 +11,8 @@ import '../services/push_notification_service.dart';
 enum AuthStatus { unknown, authenticated, unauthenticated }
 
 class AuthProvider extends ChangeNotifier {
-  final _storage = const FlutterSecureStorage();
+  // See ApiClient's _storage field doc for why resetOnError is needed on Android.
+  final _storage = const FlutterSecureStorage(aOptions: AndroidOptions(resetOnError: true));
   final _authService = AuthService();
   final _companyService = CompanyService();
   final _kycService = KYCService();
@@ -178,6 +179,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await PushNotificationService().unregisterCurrentDevice();
     final refreshToken = await _storage.read(key: AppConstants.refreshTokenKey);
     if (refreshToken != null) {
       try {

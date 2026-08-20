@@ -3,6 +3,7 @@ import '../../core/theme/app_theme.dart';
 import '../../models/reference.dart';
 import '../../services/admin_service.dart';
 import '../../services/search_service.dart';
+import '../../widgets/admin_ui_kit.dart';
 
 class AdminReferenceDataScreen extends StatefulWidget {
   const AdminReferenceDataScreen({super.key});
@@ -151,62 +152,109 @@ class _AdminReferenceDataScreenState extends State<AdminReferenceDataScreen> wit
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Countries & HS Codes'),
+      appBar: AdminGradientAppBar(
+        title: 'Countries & HS Codes',
         bottom: TabBar(controller: _tabController, tabs: const [Tab(text: 'Countries'), Tab(text: 'HS Codes')]),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _tabController.index == 0 ? _addCountry() : _addHSCode(),
         child: const Icon(Icons.add),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          FutureBuilder<List<Country>>(
-            future: _countriesFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              final countries = snapshot.data ?? [];
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: countries.length,
-                itemBuilder: (context, i) {
-                  final c = countries[i];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      title: Text(c.name),
-                      subtitle: Text('${c.iso2} · ${c.region}'),
-                      trailing: c.isRestricted ? const Icon(Icons.block, color: AppColors.error) : null,
-                    ),
+      body: AdminPageBackground(
+        child: TabBarView(
+          controller: _tabController,
+          children: [
+            FutureBuilder<List<Country>>(
+              future: _countriesFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                final countries = snapshot.data ?? [];
+                if (countries.isEmpty) {
+                  return const AdminEmptyState(
+                    icon: Icons.public_off,
+                    title: 'No countries found',
+                    subtitle: 'Add a country to get started.',
                   );
-                },
-              );
-            },
-          ),
-          FutureBuilder<List<HSCode>>(
-            future: _hsCodesFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-              final codes = snapshot.data ?? [];
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: codes.length,
-                itemBuilder: (context, i) {
-                  final h = codes[i];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      title: Text(h.code),
-                      subtitle: Text(h.description),
-                      trailing: Text('BCD ${h.basicCustomsDutyPercent.toStringAsFixed(0)}%'),
-                    ),
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: countries.length,
+                  itemBuilder: (context, i) {
+                    final c = countries[i];
+                    return AdminReveal(
+                      index: i,
+                      child: AdminCard(
+                        accent: const Color(0xFF2563EB),
+                        child: Row(
+                          children: [
+                            const AdminIconBadge(icon: Icons.public, color: Color(0xFF2563EB)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+                                  const SizedBox(height: 3),
+                                  Text('${c.iso2} · ${c.region}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+                                ],
+                              ),
+                            ),
+                            if (c.isRestricted)
+                              const AdminStatusBadge(label: 'Restricted', color: AppColors.error, icon: Icons.block),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+            FutureBuilder<List<HSCode>>(
+              future: _hsCodesFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                final codes = snapshot.data ?? [];
+                if (codes.isEmpty) {
+                  return const AdminEmptyState(
+                    icon: Icons.qr_code_2,
+                    title: 'No HS codes found',
+                    subtitle: 'Add an HS code to get started.',
                   );
-                },
-              );
-            },
-          ),
-        ],
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: codes.length,
+                  itemBuilder: (context, i) {
+                    final h = codes[i];
+                    return AdminReveal(
+                      index: i,
+                      child: AdminCard(
+                        accent: const Color(0xFF7C3AED),
+                        child: Row(
+                          children: [
+                            const AdminIconBadge(icon: Icons.tag, color: Color(0xFF7C3AED)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(h.code, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+                                  const SizedBox(height: 3),
+                                  Text(h.description, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+                                ],
+                              ),
+                            ),
+                            Text('BCD ${h.basicCustomsDutyPercent.toStringAsFixed(0)}%', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -25,6 +25,7 @@ import '../shared/notifications_screen.dart';
 import '../shared/order_details_screen.dart';
 import '../shared/order_documents_screen.dart';
 import '../wallet/wallet_screen.dart';
+import '../../widgets/premium_background.dart';
 import '../../widgets/theme_toggle_button.dart';
 import 'browse_logistics_screen.dart';
 import 'browse_rfqs_screen.dart';
@@ -124,10 +125,18 @@ class _ExporterDashboardState extends ConsumerState<ExporterDashboard> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final headerColors = isDark ? [AppColorsDark.secondary, AppColorsDark.primary] : [const Color(0xFF0F172A), const Color(0xFF1857C4)];
     return DoubleBackToExit(child: Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Exporter Dashboard'),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(gradient: LinearGradient(colors: headerColors, begin: Alignment.topLeft, end: Alignment.bottomRight)),
+        ),
         actions: [
           const ThemeToggleButton(),
           FutureBuilder<_DashboardBundle>(
@@ -174,7 +183,7 @@ class _ExporterDashboardState extends ConsumerState<ExporterDashboard> {
           const SizedBox(width: 4),
         ],
       ),
-      body: RefreshIndicator(
+      body: PremiumPageBackground(child: RefreshIndicator(
         onRefresh: () async => _refresh(),
         child: FutureBuilder<_DashboardBundle>(
           future: _future,
@@ -195,19 +204,7 @@ class _ExporterDashboardState extends ConsumerState<ExporterDashboard> {
                     completionPercent: b?.completionPercent ?? 0,
                     onCompleteProfile: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const KYCScreen())),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: _QuickSummaryGrid(
-                    openRfqs: b?.openRfqCount ?? 0,
-                    myQuotations: b?.myQuotationCount ?? 0,
-                    orders: orders.length,
-                    walletBalance: b?.wallet?.balance ?? 0,
-                    pendingPayments: b?.wallet?.pendingRelease ?? 0,
-                    onOpenRfqs: () => _push(const BrowseRFQsScreen()),
-                    onQuotations: () => _push(const MyQuotationsScreen()),
-                    onOrders: () => _scrollToOrders(),
-                    onWallet: () => _push(const WalletScreen()),
+                    onViewProfile: () => _push(const ProfileScreen()),
                   ),
                 ),
                 if (b != null && b.notifications.isNotEmpty)
@@ -232,19 +229,16 @@ class _ExporterDashboardState extends ConsumerState<ExporterDashboard> {
                     onNegotiations: () => _push(const MyNegotiationsScreen()),
                   ),
                 ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  sliver: SliverToBoxAdapter(
-                    key: _ordersKey,
-                    child: const _SectionHeader(icon: Icons.move_to_inbox_outlined, title: 'Incoming Orders'),
-                  ),
+                SliverToBoxAdapter(
+                  key: _ordersKey,
+                  child: _OrdersSummaryCard(orders: orders),
                 ),
                 if (orders.isEmpty)
                   const SliverFillRemaining(
                       hasScrollBody: false, child: _ExporterEmptyState())
                 else
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                     sliver: SliverList.builder(
                       itemCount: orders.length,
                       itemBuilder: (context, i) => _OrderCard(
@@ -263,6 +257,36 @@ class _ExporterDashboardState extends ConsumerState<ExporterDashboard> {
             );
           },
         ),
+      )),
+      bottomNavigationBar: _PremiumBottomNav(
+        activeIndex: 0,
+        items: const [
+          (Icons.dashboard_outlined, Icons.dashboard, 'Dashboard'),
+          (Icons.request_quote_outlined, Icons.request_quote, 'RFQs'),
+          (Icons.inventory_2_outlined, Icons.inventory_2, 'Orders'),
+          (Icons.description_outlined, Icons.description, 'Quotes'),
+          (Icons.receipt_long_outlined, Icons.receipt_long, 'Transactions'),
+          (Icons.person_outline, Icons.person, 'Profile'),
+        ],
+        onTap: (i) {
+          switch (i) {
+            case 1:
+              _push(const BrowseRFQsScreen());
+              break;
+            case 2:
+              _scrollToOrders();
+              break;
+            case 3:
+              _push(const MyQuotationsScreen());
+              break;
+            case 4:
+              _push(const WalletScreen());
+              break;
+            case 5:
+              _push(const ProfileScreen());
+              break;
+          }
+        },
       ),
     ));
   }
@@ -509,16 +533,22 @@ class _TapScaleState extends State<_TapScale> {
       onTapUp: widget.onTap == null ? null : (_) => setState(() => _pressed = false),
       onTapCancel: widget.onTap == null ? null : () => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
+        scale: _pressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 110),
         curve: Curves.easeOut,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: widget.borderRadius,
-          child: InkWell(
-            onTap: widget.onTap,
+        child: AnimatedOpacity(
+          opacity: _pressed ? 0.85 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          child: Material(
+            color: Colors.transparent,
             borderRadius: widget.borderRadius,
-            child: widget.child,
+            child: InkWell(
+              onTap: widget.onTap,
+              borderRadius: widget.borderRadius,
+              splashColor: AppColors.secondary.withValues(alpha: 0.15),
+              highlightColor: AppColors.secondary.withValues(alpha: 0.08),
+              child: widget.child,
+            ),
           ),
         ),
       ),
@@ -547,6 +577,66 @@ class _Reveal extends StatelessWidget {
   }
 }
 
+/// Premium bottom navigation — visual only. It does NOT introduce new routes: "Dashboard" is
+/// always the active tab (this bar only ever renders on the dashboard screen itself), and
+/// every other item just triggers the exact same push/scroll callback the equivalent Quick
+/// Action already uses — a shortcut, not a new navigation destination.
+class _PremiumBottomNav extends StatelessWidget {
+  final int activeIndex;
+  final List<(IconData, IconData, String)> items;
+  final void Function(int index) onTap;
+  const _PremiumBottomNav({required this.activeIndex, required this.items, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(4, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08), blurRadius: 16, offset: const Offset(0, -4))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            for (int i = 0; i < items.length; i++)
+              Expanded(
+                child: _TapScale(
+                  onTap: i == activeIndex ? null : () => onTap(i),
+                  borderRadius: BorderRadius.circular(14),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    decoration: BoxDecoration(
+                      color: i == activeIndex ? AppColors.secondary.withValues(alpha: 0.12) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(i == activeIndex ? items[i].$2 : items[i].$1, size: 20, color: i == activeIndex ? AppColors.secondary : AppColors.textSecondary),
+                        const SizedBox(height: 3),
+                        Text(
+                          items[i].$3,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 9, fontWeight: i == activeIndex ? FontWeight.w700 : FontWeight.w500, color: i == activeIndex ? AppColors.secondary : AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -567,6 +657,47 @@ class _SectionHeader extends StatelessWidget {
           child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.2)),
         ),
       ],
+    );
+  }
+}
+
+/// A vivid, gradient-filled action button with press micro-interaction — used for the
+/// dashboard's primary actions instead of flat Material buttons, for a more colorful,
+/// tactile feel.
+class _GradientActionButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  final IconData icon;
+  final String label;
+  final List<Color> colors;
+  final bool outlined;
+  const _GradientActionButton({required this.onTap, required this.icon, required this.label, required this.colors, this.outlined = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return _TapScale(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          gradient: outlined ? null : LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
+          color: outlined ? colors.first.withValues(alpha: 0.08) : null,
+          border: outlined ? Border.all(color: colors.first.withValues(alpha: 0.4), width: 1.4) : null,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: outlined ? null : [BoxShadow(color: colors.first.withValues(alpha: 0.35), blurRadius: 14, offset: const Offset(0, 6))],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: outlined ? colors.first : Colors.white),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(label, style: TextStyle(color: outlined ? colors.first : Colors.white, fontWeight: FontWeight.w700, fontSize: 12.5), overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -614,6 +745,7 @@ class _WelcomeCard extends StatelessWidget {
   final bool verified;
   final int completionPercent;
   final VoidCallback onCompleteProfile;
+  final VoidCallback onViewProfile;
   const _WelcomeCard({
     required this.name,
     this.companyName,
@@ -621,6 +753,7 @@ class _WelcomeCard extends StatelessWidget {
     required this.verified,
     required this.completionPercent,
     required this.onCompleteProfile,
+    required this.onViewProfile,
   });
 
   @override
@@ -656,7 +789,10 @@ class _WelcomeCard extends StatelessWidget {
         child: Stack(
           children: [
             const _HeroBackdrop(),
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
@@ -805,6 +941,29 @@ class _WelcomeCard extends StatelessWidget {
             ),
           ],
             ),
+                const SizedBox(height: 14),
+                _TapScale(
+                  onTap: onViewProfile,
+                  borderRadius: BorderRadius.circular(30),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('View Profile', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                        SizedBox(width: 6),
+                        Icon(Icons.arrow_forward, color: Colors.white, size: 15),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -812,128 +971,75 @@ class _WelcomeCard extends StatelessWidget {
   }
 }
 
-class _QuickSummaryGrid extends StatelessWidget {
-  final int openRfqs;
-  final int myQuotations;
-  final int orders;
-  final double walletBalance;
-  final double pendingPayments;
-  final VoidCallback onOpenRfqs;
-  final VoidCallback onQuotations;
-  final VoidCallback onOrders;
-  final VoidCallback onWallet;
-  const _QuickSummaryGrid({
-    required this.openRfqs,
-    required this.myQuotations,
-    required this.orders,
-    required this.walletBalance,
-    required this.pendingPayments,
-    required this.onOpenRfqs,
-    required this.onQuotations,
-    required this.onOrders,
-    required this.onWallet,
-  });
+/// Dark "Incoming Orders" summary card — a real, honest breakdown of the same `orders`
+/// list already fetched for the list below (Pending = payment held/awaiting action,
+/// Confirmed = accepted, Shipped = shipped/in transit, Completed = payment released).
+class _OrdersSummaryCard extends StatelessWidget {
+  final List<dynamic> orders;
+  const _OrdersSummaryCard({required this.orders});
 
   @override
   Widget build(BuildContext context) {
-    final row1 = [
-      ('Open RFQs', '$openRfqs', Icons.request_quote_outlined, AppColors.primary, onOpenRfqs),
-      ('My Quotations', '$myQuotations', Icons.description_outlined, AppColors.secondary, onQuotations),
-      ('Orders', '$orders', Icons.inventory_2_outlined, AppColors.accent, onOrders),
-    ];
-    final row2 = [
-      ('Wallet Balance', '₹${walletBalance.toStringAsFixed(0)}', Icons.account_balance_wallet_outlined, AppColors.success, onWallet),
-      ('Pending Payments', '₹${pendingPayments.toStringAsFixed(0)}', Icons.hourglass_top_outlined, AppColors.warning, onWallet),
+    final pending = orders.where((o) => ['created', 'payment_held'].contains(o['status'])).length;
+    final confirmed = orders.where((o) => o['status'] == 'accepted').length;
+    final shipped = orders.where((o) => ['shipped', 'in_transit'].contains(o['status'])).length;
+    final completed = orders.where((o) => ['payment_released', 'delivered'].contains(o['status'])).length;
+    final items = [
+      (Icons.hourglass_top_outlined, '$pending', 'Pending', const Color(0xFF60A5FA)),
+      (Icons.check_circle_outline, '$confirmed', 'Confirmed', const Color(0xFF4ADE80)),
+      (Icons.local_shipping_outlined, '$shipped', 'Shipped', const Color(0xFFFB923C)),
+      (Icons.task_alt_outlined, '$completed', 'Completed', const Color(0xFFC084FC)),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Column(
-        children: [
-          Row(
+      child: _Reveal(
+        index: 0,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Color(0xFF0F172A), Color(0xFF184A8C)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [BoxShadow(color: const Color(0xFF0F172A).withValues(alpha: 0.4), blurRadius: 20, offset: const Offset(0, 10))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (int i = 0; i < row1.length; i++) ...[
-                if (i > 0) const SizedBox(width: 10),
-                Expanded(
-                  child: _Reveal(index: i, child: _StatCard(label: row1[i].$1, value: row1[i].$2, icon: row1[i].$3, color: row1[i].$4, onTap: row1[i].$5)),
-                ),
-              ],
+              Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.move_to_inbox_outlined, size: 16, color: Colors.white),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Incoming Orders', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15.5)),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  for (final it in items)
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(color: it.$4.withValues(alpha: 0.18), shape: BoxShape.circle),
+                            child: Icon(it.$1, size: 16, color: it.$4),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(it.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                          const SizedBox(height: 2),
+                          Text(it.$3, style: TextStyle(color: Colors.white.withValues(alpha: 0.65), fontSize: 10.5), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              for (int i = 0; i < row2.length; i++) ...[
-                if (i > 0) const SizedBox(width: 10),
-                Expanded(
-                  child: _Reveal(index: row1.length + i, child: _StatCard(label: row2[i].$1, value: row2[i].$2, icon: row2[i].$3, color: row2[i].$4, onTap: row2[i].$5)),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _StatCard(
-      {required this.label,
-      required this.value,
-      required this.icon,
-      required this.color,
-      required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return _TapScale(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withValues(alpha: 0.10)),
-          boxShadow: [
-            BoxShadow(
-                color: color.withValues(alpha: 0.10),
-                blurRadius: 14,
-                offset: const Offset(0, 6))
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, size: 17, color: color),
-            ),
-            const SizedBox(height: 10),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(value,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 15.5, letterSpacing: -0.3),
-                  maxLines: 1),
-            ),
-            const SizedBox(height: 2),
-            Text(label,
-                style:
-                    const TextStyle(color: AppColors.textSecondary, fontSize: 10.5, fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-          ],
         ),
       ),
     );
@@ -1051,39 +1157,13 @@ class _QuickActionsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = [
-      (
-        Icons.request_quote_outlined,
-        'Browse RFQs',
-        onBrowseRfqs,
-        AppColors.primary
-      ),
-      (
-        Icons.description_outlined,
-        'My Quotations',
-        onQuotations,
-        AppColors.secondary
-      ),
-      (Icons.inventory_2_outlined, 'Orders', onOrders, AppColors.accent),
-      (
-        Icons.account_balance_wallet_outlined,
-        'Wallet',
-        onWallet,
-        AppColors.success
-      ),
-      (Icons.chat_bubble_outline, 'Messages', onMessages, AppColors.heldBlue),
-      (
-        Icons.travel_explore_outlined,
-        'Trade Tools',
-        onTradeTools,
-        AppColors.warning
-      ),
-      if (onNegotiations != null)
-        (
-          Icons.handshake_outlined,
-          'Negotiations',
-          onNegotiations!,
-          AppColors.secondary
-        ),
+      (Icons.request_quote_outlined, 'Browse RFQs', onBrowseRfqs, const Color(0xFF2563EB)),
+      (Icons.description_outlined, 'My Quotations', onQuotations, const Color(0xFF7C3AED)),
+      (Icons.inventory_2_outlined, 'Orders', onOrders, const Color(0xFFEA580C)),
+      (Icons.receipt_long_outlined, 'Transaction History', onWallet, const Color(0xFF16A34A)),
+      (Icons.chat_bubble_outline, 'Messages', onMessages, const Color(0xFF0EA5E9)),
+      (Icons.travel_explore_outlined, 'Trade Tools', onTradeTools, const Color(0xFF0D9488)),
+      if (onNegotiations != null) (Icons.handshake_outlined, 'Negotiations', onNegotiations!, const Color(0xFF9333EA)),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -1127,14 +1207,16 @@ class _QuickActionTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Theme.of(context).cardTheme.color,
           borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: color.withValues(alpha: 0.14)),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 3))
+                color: color.withValues(alpha: 0.16),
+                blurRadius: 12,
+                offset: const Offset(0, 5))
           ],
         ),
         child: Column(
@@ -1144,15 +1226,18 @@ class _QuickActionTile extends StatelessWidget {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [color.withValues(alpha: 0.20), color.withValues(alpha: 0.08)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Icon(icon, color: color, size: 20),
+                  gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.65)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                  borderRadius: BorderRadius.circular(13),
+                  boxShadow: [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 3))]),
+              child: Icon(icon, color: Colors.white, size: 20),
             ),
             const SizedBox(height: 8),
             Text(label,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                     fontSize: 11, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Container(height: 3, width: 22, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
           ],
         ),
       ),
@@ -1274,26 +1359,22 @@ class _OrderCard extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: onDetails,
-                        style: OutlinedButton.styleFrom(
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12))),
-                        icon: const Icon(Icons.visibility_outlined, size: 16),
-                        label: const Text('Track Shipment'),
+                      child: _GradientActionButton(
+                        onTap: onDetails,
+                        icon: Icons.visibility_outlined,
+                        label: 'Track Shipment',
+                        colors: const [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                        outlined: true,
                       ),
                     ),
                     if (status == 'payment_held' || status == 'accepted') ...[
                       const SizedBox(width: 8),
                       Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: onAssignLogistics,
-                          style: ElevatedButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12))),
-                          icon: const Icon(Icons.local_shipping_outlined,
-                              size: 16),
-                          label: const Text('Assign Logistics'),
+                        child: _GradientActionButton(
+                          onTap: onAssignLogistics,
+                          icon: Icons.local_shipping_outlined,
+                          label: 'Assign Logistics',
+                          colors: const [Color(0xFF0EA5E9), Color(0xFF0369A1)],
                         ),
                       ),
                     ],
